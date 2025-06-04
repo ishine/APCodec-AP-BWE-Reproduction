@@ -132,6 +132,7 @@ def train(rank, world_size, h):
             h.hop_size,
             h.win_size,
             h.sampling_rate,
+            h.low_sampling_rate,
             h.ratio,
             n_cache_reuse=0,
             shuffle=False,  # DistributedSampler会处理shuffle
@@ -164,6 +165,7 @@ def train(rank, world_size, h):
             h.hop_size,
             h.win_size,
             h.sampling_rate,
+            h.low_sampling_rate,
             h.ratio,
             False,
             False,
@@ -211,17 +213,16 @@ def train(rank, world_size, h):
 
             for i, batch in enumerate(train_loader):
                 start_b = time.time()
-                logamp, pha, rea, imag, y, y_mel = batch
-                y = torch.autograd.Variable(y.to(device, non_blocking=True))
+                logamp, pha, rea, imag, y_hr, y_hr_mel = batch
+                y_hr = torch.autograd.Variable(y_hr.to(device, non_blocking=True))
                 logamp = torch.autograd.Variable(logamp.to(device, non_blocking=True))
                 pha = torch.autograd.Variable(pha.to(device, non_blocking=True))
                 rea = torch.autograd.Variable(rea.to(device, non_blocking=True))
                 imag = torch.autograd.Variable(imag.to(device, non_blocking=True))
-                y_mel = torch.autograd.Variable(y_mel.to(device, non_blocking=True))
-                y = y.unsqueeze(1)
-
+                y_hr_mel = torch.autograd.Variable(y_hr_mel.to(device, non_blocking=True))
+                y_hr = y_hr.unsqueeze(1)
                 latent, commitment_loss, codebook_loss = encoder(logamp, pha)
-                logamp_g, pha_g, rea_g, imag_g, y_g = decoder(latent)
+                logamp_g, pha_g, rea_g, imag_g, y_lr_g, y_g = decoder(latent) #sampling rate of y_g is 48kHz
                 y_g_mel = mel_spectrogram(
                     y_g.squeeze(1),
                     h.n_fft,
@@ -232,15 +233,14 @@ def train(rank, world_size, h):
                     0,
                     None,
                 )
-
                 optim_d.zero_grad()
 
-                y_df_hat_r, y_df_hat_g, _, _ = mpd(y, y_g.detach())
+                y_df_hat_r, y_df_hat_g, _, _ = mpd(y_hr, y_g.detach())
                 loss_disc_f, losses_disc_f_r, losses_disc_f_g = discriminator_loss(
                     y_df_hat_r, y_df_hat_g
                 )
 
-                y_ds_hat_r, y_ds_hat_g, _, _ = mrd(y, y_g.detach())
+                y_ds_hat_r, y_ds_hat_g, _, _ = mrd(y_hr, y_g.detach())
                 loss_disc_s, losses_disc_s_r, losses_disc_s_g = discriminator_loss(
                     y_ds_hat_r, y_ds_hat_g
                 )
@@ -254,14 +254,14 @@ def train(rank, world_size, h):
                 optim_g.zero_grad()
 
                 # Losses defined on log amplitude spectra
-                L_A = amplitude_loss(logamp, logamp_g)
+                L_A = amplitude_loss(logamp, logamp_g) #lr
 
-                L_IP, L_GD, L_PTD = phase_loss(pha, pha_g, h.n_fft, pha.size()[-1])
+                L_IP, L_GD, L_PTD = phase_loss(pha, pha_g, h.n_fft, pha.size()[-1]) #lr
                 # Losses defined on phase spectra
                 L_P = L_IP + L_GD + L_PTD
 
                 _, _, rea_g_final, imag_g_final = amp_pha_specturm(
-                    y_g.squeeze(1), h.n_fft, h.hop_size, h.win_size
+                    y_lr_g.squeeze(1), h.n_fft, h.hop_size, h.win_size
                 )
                 L_C = STFT_consistency_loss(rea_g, rea_g_final, imag_g, imag_g_final)
                 L_R = F.l1_loss(rea, rea_g)
@@ -269,16 +269,16 @@ def train(rank, world_size, h):
                 # Losses defined on reconstructed STFT spectra
                 L_S = L_C + 2.25 * (L_R + L_I)
 
-                y_df_r, y_df_g, fmap_f_r, fmap_f_g = mpd(y, y_g)
-                y_ds_r, y_ds_g, fmap_s_r, fmap_s_g = mrd(y, y_g)
+                y_df_r, y_df_g, fmap_f_r, fmap_f_g = mpd(y_hr, y_g)
+                y_ds_r, y_ds_g, fmap_s_r, fmap_s_g = mrd(y_hr, y_g)
                 loss_fm_f = feature_loss(fmap_f_r, fmap_f_g)
                 loss_fm_s = feature_loss(fmap_s_r, fmap_s_g)
                 loss_gen_f, losses_gen_f = generator_loss(y_df_g)
                 loss_gen_s, losses_gen_s = generator_loss(y_ds_g)
                 L_GAN_G = loss_gen_s * 0.1 + loss_gen_f
                 L_FM = loss_fm_s * 0.1 + loss_fm_f
-                L_Mel = F.l1_loss(y_mel, y_g_mel)
-                L_Mel_L2 = amplitude_loss(y_mel, y_g_mel)
+                L_Mel = F.l1_loss(y_hr_mel, y_g_mel)
+                L_Mel_L2 = amplitude_loss(y_hr_mel, y_g_mel)
                 # Losses defined on final waveforms
                 L_W = L_GAN_G + L_FM + 45 * L_Mel + 45 * L_Mel_L2
 
@@ -309,8 +309,8 @@ def train(rank, world_size, h):
                         ).item()
                         R_error = F.l1_loss(rea, rea_g).item()
                         I_error = F.l1_loss(imag, imag_g).item()
-                        Mel_error = F.l1_loss(y_mel, y_g_mel).item()
-                        Mel_L2_error = amplitude_loss(y_mel, y_g_mel).item()
+                        Mel_error = F.l1_loss(y_hr_mel, y_g_mel).item()
+                        Mel_L2_error = amplitude_loss(y_hr_mel, y_g_mel).item()
                         commit_loss = commitment_loss.item()
 
                     print(
@@ -371,9 +371,9 @@ def train(rank, world_size, h):
                     val_Mel_L2_err_tot = 0
                     with torch.no_grad():
                         for j, batch in enumerate(validation_loader):
-                            logamp, pha, rea, imag, y, y_mel = batch
+                            logamp, pha, rea, imag, y_hr, y_hr_mel = batch
                             latent, _, _ = encoder(logamp.to(device), pha.to(device))
-                            logamp_g, pha_g, rea_g, imag_g, y_g = decoder(latent)
+                            logamp_g, pha_g, rea_g, imag_g, y_lr_g, y_g = decoder(latent)
 
                             logamp = torch.autograd.Variable(
                                 logamp.to(device, non_blocking=True)
@@ -383,8 +383,8 @@ def train(rank, world_size, h):
                             imag = torch.autograd.Variable(
                                 imag.to(device, non_blocking=True)
                             )
-                            y_mel = torch.autograd.Variable(
-                                y_mel.to(device, non_blocking=True)
+                            y_hr_mel = torch.autograd.Variable(
+                                y_hr_mel.to(device, non_blocking=True)
                             )
                             y_g_mel = mel_spectrogram(
                                 y_g.squeeze(1),
@@ -398,7 +398,7 @@ def train(rank, world_size, h):
                             )
 
                             _, _, rea_g_final, imag_g_final = amp_pha_specturm(
-                                y_g.squeeze(1), h.n_fft, h.hop_size, h.win_size
+                                y_lr_g.squeeze(1), h.n_fft, h.hop_size, h.win_size
                             )
                             val_A_err_tot += amplitude_loss(logamp, logamp_g).item()
                             val_IP_err, val_GD_err, val_PTD_err = phase_loss(
@@ -412,13 +412,13 @@ def train(rank, world_size, h):
                             ).item()
                             val_R_err_tot += F.l1_loss(rea, rea_g).item()
                             val_I_err_tot += F.l1_loss(imag, imag_g).item()
-                            val_Mel_err_tot += F.l1_loss(y_mel, y_g_mel).item()
-                            val_Mel_L2_err_tot += amplitude_loss(y_mel, y_g_mel).item()
+                            val_Mel_err_tot += F.l1_loss(y_hr_mel, y_g_mel).item()
+                            val_Mel_L2_err_tot += amplitude_loss(y_hr_mel, y_g_mel).item()
 
                             if j <= 4:
                                 if steps == 0:
                                     sw.add_audio(
-                                        "gt/y_{}".format(j), y[0], steps, h.sampling_rate
+                                        "gt/y_{}".format(j), y_hr[0], steps, h.sampling_rate
                                     )
                                     sw.add_figure(
                                         "gt/y_logamp_{}".format(j),

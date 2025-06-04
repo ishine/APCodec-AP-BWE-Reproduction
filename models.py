@@ -6,6 +6,7 @@ from torch.nn.utils import weight_norm, spectral_norm
 from utils import init_weights, get_padding
 import numpy as np
 from quantize import ResidualVectorQuantize
+import torchaudio.functional as F_audio
 
 LRELU_SLOPE = 0.1
 
@@ -266,12 +267,13 @@ class Decoder(torch.nn.Module):
         imag = torch.exp(logamp)*torch.sin(pha)
 
         spec = torch.complex(rea, imag)
-
         #spec = torch.cat((rea.unsqueeze(-1),imag.unsqueeze(-1)),-1)
+        audio_lr = torch.istft(spec, self.h.n_fft, hop_length=self.h.hop_size, win_length=self.h.win_size, window=torch.hann_window(self.h.win_size).to(latent.device), center=True)
 
-        audio = torch.istft(spec, self.h.n_fft, hop_length=self.h.hop_size, win_length=self.h.win_size, window=torch.hann_window(self.h.win_size).to(latent.device), center=True)
+        # 新增：将 8 kHz 波形上采样到 48 kHz
+        audio_hr = F_audio.resample(audio_lr, orig_freq=self.h.low_sampling_rate, new_freq=self.h.sampling_rate)  # [B, 1, T_high]
 
-        return logamp, pha, rea, imag, audio.unsqueeze(1)
+        return logamp, pha, rea, imag, audio_lr.unsqueeze(1) ,audio_hr.unsqueeze(1)
 
 class DiscriminatorP(torch.nn.Module):
     def __init__(self, period, kernel_size=5, stride=3, use_spectral_norm=False):
