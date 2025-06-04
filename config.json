@@ -4,7 +4,7 @@
     "test_input_wavs_dir":"/mnt/nvme_share/srt30/AP-BWE-main/VCTK-Corpus-0.92/wav48/test",
     "test_wav_output_dir":"output_wav",
 
-    "batch_size": 196,
+    "batch_size": 16,
     "learning_rate": 0.0008,
     "adam_b1": 0.8,
     "adam_b2": 0.99,
@@ -51,7 +51,7 @@
     "latent_dim": 32,
 
 
-    "segment_size": 7960,
+    "segment_size": 9360,
     "num_mels": 80,
     "n_fft": 1024,
     "hop_size": 40,
@@ -59,6 +59,7 @@
     "num_mels_for_loss": 80,
 
     "sampling_rate": 48000,
+    "low_sampling_rate": 8000,
 
-    "num_workers": 96
+    "num_workers": 4
 }

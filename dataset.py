@@ -7,6 +7,7 @@ import numpy as np
 from librosa.util import normalize
 from librosa.filters import mel as librosa_mel_fn
 import librosa
+import torchaudio.functional as F
 
 def load_wav(full_path, sample_rate):
     data, _ = librosa.load(full_path, sr=sample_rate, mono=True)
@@ -64,7 +65,7 @@ def get_dataset_filelist(input_training_wav_list, input_validation_wav_list):
 
 class Dataset(torch.utils.data.Dataset):
     def __init__(self, training_files, segment_size, n_fft, num_mels_for_loss,
-                 hop_size, win_size, sampling_rate, ratio, split=True, shuffle=True, n_cache_reuse=1,
+                 hop_size, win_size, sampling_rate, low_sampling_rate, ratio, split=True, shuffle=True, n_cache_reuse=1,
                  device=None, rank=0):
         self.audio_files = training_files
         random.seed(1234 + rank)  # Use rank-specific seed for shuffling
@@ -72,6 +73,7 @@ class Dataset(torch.utils.data.Dataset):
             random.shuffle(self.audio_files)
         self.segment_size = segment_size
         self.sampling_rate = sampling_rate
+        self.low_sampling_rate = low_sampling_rate
         self.ratio = ratio
         self.split = split
         self.n_fft = n_fft
@@ -94,31 +96,56 @@ class Dataset(torch.utils.data.Dataset):
             audio = self.cached_wav
             self._cache_ref_count -= 1
 
-        audio = torch.FloatTensor(audio)  # [T]
-        audio = audio.unsqueeze(0)  # [1, T]
+        audio_hr = torch.FloatTensor(audio)  # [T]
+        audio_hr = audio_hr.unsqueeze(0)  # [1, T]
+
+        # 先裁剪 audio_hr 以满足 L = 240M 且 M+1 是 ratio 的倍数
+        L = audio_hr.size(1)
+        M = L // 240
+        if L % 240 != 0 or (M + 1) % self.ratio != 0:
+            target_M = ((M + 1) // self.ratio) * self.ratio - 1
+            target_L = target_M * 240
+            audio_hr = audio_hr[:, :target_L]  # 裁剪到 target_L
+
+        # 再进行下采样
+        audio_lr = F.resample(audio_hr, orig_freq=self.sampling_rate, new_freq=self.low_sampling_rate)  # [1, T_low]
 
         if self.split:
-            if audio.size(1) >= self.segment_size:
-                max_audio_start = audio.size(1) - self.segment_size
-                random.seed(self.rank + index)  # Use rank and index for segment selection
+            if audio_hr.size(1) >= self.segment_size:
+                max_audio_start = audio_hr.size(1) - self.segment_size
                 audio_start = random.randint(0, max_audio_start)
-                audio = audio[:, audio_start: audio_start + self.segment_size]  # [1, T]
+                audio_hr = audio_hr[:, audio_start: audio_start + self.segment_size]  # [1, T_hr]
+
+                # 下采样音频的起始位置和长度
+                scale = self.low_sampling_rate / self.sampling_rate
+                low_audio_start = int(audio_start * scale + 0.5)
+                low_segment_size = int(self.segment_size * scale + 0.5) 
+                audio_lr = audio_lr[:, low_audio_start: low_audio_start + low_segment_size]
+
+                # 补齐 audio_lr（如果需要）
+                if audio_lr.size(1) < low_segment_size:
+                    pad_size = low_segment_size - audio_lr.size(1)
+                    audio_lr = torch.nn.functional.pad(audio_lr, (0, pad_size), 'constant')
             else:
-                audio = torch.nn.functional.pad(audio, (0, self.segment_size - audio.size(1)), 'constant')
-        else:
-            if audio.size(1) - (audio.size(1) // self.hop_size) * self.hop_size > 0:
-                audio = audio[:, 0:-(audio.size(1) - (audio.size(1) // self.hop_size) * self.hop_size)]
-            if audio.size(1) - (audio.size(1) // self.hop_size) * self.hop_size < 0:
-                audio = audio[:, 0:-(audio.size(1) - (audio.size(1) // self.hop_size) * self.hop_size + self.hop_size)]
-            if (audio.size(1) // self.hop_size + 1) % self.ratio > 0:
-                audio = audio[:, 0:(((audio.size(1) // self.hop_size + 1) // self.ratio) * self.ratio - 1) * self.hop_size]
+                # 补齐 audio_hr
+                audio_hr = torch.nn.functional.pad(audio_hr, (0, self.segment_size - audio_hr.size(1)), 'constant')
 
-        mel_loss = mel_spectrogram(audio, self.n_fft, self.num_mels_for_loss,
-                                   self.sampling_rate, self.hop_size, self.win_size, 0, None,
-                                   center=True)  # [1, n_fft/2+1, frames]
-        log_amplitude, phase, rea, imag = amp_pha_specturm(audio, self.n_fft, self.hop_size, self.win_size)  # [1, n_fft/2+1, frames]
+                # 下采样后补齐 audio_lr
+                scale = self.low_sampling_rate / self.sampling_rate
+                low_segment_size = int(self.segment_size * scale + 0.5)
+                audio_lr = torch.nn.functional.pad(audio_lr, (0, low_segment_size - audio_lr.size(1)), 'constant')
 
-        return (log_amplitude.squeeze(), phase.squeeze(), rea.squeeze(), imag.squeeze(), audio.squeeze(0), mel_loss.squeeze())
+
+        
+        # 计算 48 kHz 波形的 Mel 频谱（用于损失）
+        mel_loss = mel_spectrogram(audio_hr, self.n_fft, self.num_mels_for_loss,
+                                  self.sampling_rate, self.hop_size, self.win_size, 0, None,
+                                  center=True)  # [1, freq, frames]
+
+        # 新增：计算 8 kHz 波形的对数幅度谱和相位谱，使用相同的 STFT 参数
+        log_amplitude, phase, rea, imag = amp_pha_specturm(
+            audio_lr, self.n_fft, self.hop_size, self.win_size)  # [1, freq, frames_low]
+        return (log_amplitude.squeeze(), phase.squeeze(), rea.squeeze(), imag.squeeze(), audio_hr.squeeze(), mel_loss.squeeze())
 
     def __len__(self):
         return len(self.audio_files)
