@@ -5,15 +5,14 @@ from torch.nn import Conv1d, ConvTranspose1d, AvgPool1d, Conv2d
 from torch.nn.utils import weight_norm, spectral_norm
 from exp_asr.utils import init_weights, get_padding
 import numpy as np
-from exp_asr.quantize import ResidualVectorQuantize
+from exp_asr.quantize import ResidualFSQ
 import torchaudio.functional as F_audio
 import torchaudio
 
 LRELU_SLOPE = 0.1
 
 class GRN(nn.Module):
-    """ GRN (Global Response Normalization) layer
-    """
+
     def __init__(self, dim):
         super().__init__()
         self.gamma = nn.Parameter(torch.zeros(1, 1, dim))
@@ -25,16 +24,6 @@ class GRN(nn.Module):
         return self.gamma * (x * Nx) + self.beta + x
 
 class ConvNeXtBlock(nn.Module):
-    """ConvNeXt Block adapted from https://github.com/facebookresearch/ConvNeXt to 1D audio signal.
-
-    Args:
-        dim (int): Number of input channels.
-        intermediate_dim (int): Dimensionality of the intermediate layer.
-        layer_scale_init_value (float, optional): Initial value for the layer scale. None means no scaling.
-            Defaults to None.
-        adanorm_num_embeddings (int, optional): Number of embeddings for AdaLayerNorm.
-            None means non-conditional LayerNorm. Defaults to None.
-    """
 
     def __init__(
         self,
@@ -73,18 +62,42 @@ class ConvNeXtBlock(nn.Module):
         return x
 
 # 新增 CTCHead 类
-class CTCHead(nn.Module):
-    def __init__(self, input_dim, hidden_dim, vocab_size):
-        super(CTCHead, self).__init__()
-        self.conv1 = nn.Conv1d(input_dim, hidden_dim, kernel_size=3, padding=1)
-        self.relu = nn.ReLU()
-        self.conv2 = nn.Conv1d(hidden_dim, vocab_size, kernel_size=1)
-    
+class MLPBlock(nn.Module):
+
+    def __init__(self, dim, hidden_dim, dropout_rate=0.1):
+        super().__init__()
+        self.layer_norm = nn.LayerNorm(dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),  
+            nn.Dropout(dropout_rate),
+            nn.Linear(hidden_dim, dim),
+            nn.Dropout(dropout_rate)
+        )
+
     def forward(self, x):
-        x = self.conv1(x)
-        x = self.relu(x)
-        x = self.conv2(x)
+        residual = x
+        x = self.layer_norm(x)
+        x = self.mlp(x)
+        return x + residual
+
+class CTCHead(nn.Module):
+
+    def __init__(self, input_dim, vocab_size, hidden_dim=512, num_mlp_blocks=2, dropout_rate=0.1):
+        super().__init__()
+        self.mlp_blocks = nn.Sequential(
+            *[MLPBlock(input_dim, hidden_dim, dropout_rate) for _ in range(num_mlp_blocks)]
+        )
+        self.proj = nn.Linear(input_dim, vocab_size)
+
+    def forward(self, x):
+        x = x.permute(0, 2, 1) #[B, T, C]
+        x = self.mlp_blocks(x)
+        x = self.proj(x) #[B, T, vocab_size]
+        
         return x
+
+
 
 class Encoder(torch.nn.Module):
     def __init__(self, h):
@@ -143,12 +156,12 @@ class Encoder(torch.nn.Module):
         self.latent_output_conv.apply(init_weights)
 
         # 添加 CTC 头
-        self.ctc_head = CTCHead(input_dim=h.latent_dim, hidden_dim=256, vocab_size=30)  # 假设词汇表大小为29
+        self.ctc_head = CTCHead(input_dim=h.latent_dim, vocab_size=27)  # 假设词汇表大小为27
 
-        self.quantizer = ResidualVectorQuantize(
+        self.quantizer = ResidualFSQ(
             input_dim=h.latent_dim,
             codebook_dim=h.latent_dim,
-            n_codebooks=4,
+            n_quantizers=4,
             codebook_size=1024,
             quantizer_dropout=False
         )
@@ -158,7 +171,7 @@ class Encoder(torch.nn.Module):
             nn.init.trunc_normal_(m.weight, std=0.02)
             nn.init.constant_(m.bias, 0)
 
-    def forward(self, logamp, pha, text_labels=None, target_lengths=None):
+    def forward(self, logamp, pha, text_labels=None, target_lengths=None, input_lengths=None):
 
         logamp_encode = self.embed_logamp(logamp)
         logamp_encode = self.norm_logamp(logamp_encode.transpose(1, 2))
@@ -179,108 +192,29 @@ class Encoder(torch.nn.Module):
         pha_encode = self.PHA_Encoder_downsample_output_conv(pha_encode)
 
         encode = torch.cat((logamp_encode, pha_encode), -2) 
-
         latent = self.latent_output_conv(encode)
+        latent_before_quantizer = latent
+        latent,codes,_,commitment_loss,codebook_loss = self.quantizer(latent)
 
-        latent,_,_,commitment_loss,codebook_loss = self.quantizer(latent)
-
-       # CTC 前向传播
-        ctc_output = self.ctc_head(latent)  # [B, V, T]
-        ctc_output = ctc_output.permute(2, 0, 1)  # [T, B, V]
-        ctcLoss = nn.CTCLoss(blank=0,reduction ="mean")
-
+        # CTC 前向传播
+        ctc_output = self.ctc_head(latent_before_quantizer)  # [B, T, V]
+        ctc_output = ctc_output.permute(1,0,2) #[T, B, V]
         log_probs = F.log_softmax(ctc_output, dim=-1)
+        ctc_loss = torch.tensor(0.0, device=log_probs.device)
+        print(f"log_probs.shape:{log_probs.shape}")
+        print(f"target_lengths:{target_lengths}")
+        if text_labels is not None and target_lengths is not None and input_lengths is not None:
+            ctcLoss = nn.CTCLoss(blank=0, reduction="mean")
+            assert (target_lengths <= input_lengths).all(), "CTC target longer than input"
+            ctc_loss = ctcLoss(
+                log_probs=log_probs,
+                targets=text_labels,
+                input_lengths=input_lengths,
+                target_lengths=target_lengths
+            )
 
-        input_lengths = torch.full(
-            size=(ctc_output.size(1),),  # batch_size
-            fill_value=ctc_output.size(0),  # time_steps
-            dtype=torch.long,
-            device=ctc_output.device
-        )
-        assert (target_lengths <= input_lengths).all(), "CTC target longer than input"
+        return latent,codes,commitment_loss,codebook_loss,ctc_loss,log_probs
 
-        ctc_loss = ctcLoss(
-            log_probs=log_probs,
-            targets=text_labels,
-            input_lengths=input_lengths,
-            target_lengths=target_lengths
-        )
-
-            
-        return latent,commitment_loss,codebook_loss,ctc_loss
-
-class APNet_BWE_Model(torch.nn.Module):
-    def __init__(self, h):
-        super(APNet_BWE_Model, self).__init__()
-        self.h = h
-        self.adanorm_num_embeddings = None
-        self.num_layers=8
-        layer_scale_init_value =  1 / self.num_layers
-        self.ConvNeXt_channels = 512
-        self.intermediate_dim=512
-        self.conv_pre_mag = nn.Conv1d(h.n_fft//2+1, self.ConvNeXt_channels, 7, 1, padding=get_padding(7, 1))
-        self.norm_pre_mag = nn.LayerNorm(self.ConvNeXt_channels, eps=1e-6)
-        self.conv_pre_pha = nn.Conv1d(h.n_fft//2+1, self.ConvNeXt_channels, 7, 1, padding=get_padding(7, 1))
-        self.norm_pre_pha = nn.LayerNorm(self.ConvNeXt_channels, eps=1e-6)
-
-        self.convnext_mag = nn.ModuleList(
-            [
-                ConvNeXtBlock(
-                    dim=self.ConvNeXt_channels,
-                    intermediate_dim=self.intermediate_dim,
-                    layer_scale_init_value=layer_scale_init_value,
-                    adanorm_num_embeddings=self.adanorm_num_embeddings,
-                )
-                for _ in range(self.num_layers)
-            ]
-        )
-
-        self.convnext_pha = nn.ModuleList(
-            [
-                ConvNeXtBlock(
-                    dim=self.ConvNeXt_channels,
-                    intermediate_dim=self.intermediate_dim,
-                    layer_scale_init_value=layer_scale_init_value,
-                    adanorm_num_embeddings=self.adanorm_num_embeddings,
-                )
-                for _ in range(self.num_layers)
-            ]
-        )
-
-        self.norm_post_mag = nn.LayerNorm(self.ConvNeXt_channels, eps=1e-6)
-        self.norm_post_pha = nn.LayerNorm(self.ConvNeXt_channels, eps=1e-6)
-        self.apply(self._init_weights)
-        self.linear_post_mag = nn.Linear(self.ConvNeXt_channels, h.n_fft//2+1)
-        self.linear_post_pha_r = nn.Linear(self.ConvNeXt_channels, h.n_fft//2+1)
-        self.linear_post_pha_i = nn.Linear(self.ConvNeXt_channels, h.n_fft//2+1)
-
-    def _init_weights(self, m):
-        if isinstance(m, (nn.Conv1d, nn.Linear)):
-            nn.init.trunc_normal_(m.weight, std=0.02)
-            nn.init.constant_(m.bias, 0)
-
-    def forward(self, mag_nb, pha_nb):
-
-        x_mag = self.conv_pre_mag(mag_nb)
-        x_pha = self.conv_pre_pha(pha_nb)
-        x_mag = self.norm_pre_mag(x_mag.transpose(1, 2)).transpose(1, 2)
-        x_pha = self.norm_pre_pha(x_pha.transpose(1, 2)).transpose(1, 2)
-
-        for conv_block_mag, conv_block_pha in zip(self.convnext_mag, self.convnext_pha):
-            x_mag = x_mag + x_pha
-            x_pha = x_pha + x_mag
-            x_mag = conv_block_mag(x_mag, cond_embedding_id=None)
-            x_pha = conv_block_pha(x_pha, cond_embedding_id=None)
-
-        x_mag = self.norm_post_mag(x_mag.transpose(1, 2))
-        mag_wb = mag_nb + self.linear_post_mag(x_mag).transpose(1, 2)
-
-        x_pha = self.norm_post_pha(x_pha.transpose(1, 2))
-        x_pha_r = self.linear_post_pha_r(x_pha)
-        x_pha_i = self.linear_post_pha_i(x_pha)
-        pha_wb = torch.atan2(x_pha_i, x_pha_r).transpose(1, 2)
-        
-        return mag_wb, pha_wb
 
 class Decoder(torch.nn.Module):
     def __init__(self, h):
@@ -346,8 +280,6 @@ class Decoder(torch.nn.Module):
         self.PHA_Decoder_output_R_conv.apply(init_weights)
         self.PHA_Decoder_output_I_conv.apply(init_weights)
 
-        #带宽恢复
-        self.BWE = APNet_BWE_Model(h)
 
     def _init_weights(self, m):
         if isinstance(m, (nn.Conv1d, nn.Linear)):
@@ -378,15 +310,9 @@ class Decoder(torch.nn.Module):
         R = self.PHA_Decoder_output_R_conv(pha)
         I = self.PHA_Decoder_output_I_conv(pha)
         pha = torch.atan2(I,R)
-        
-        #带宽恢复
-        logamp, pha = self.BWE(logamp, pha)
-
         rea = torch.exp(logamp)*torch.cos(pha)
         imag = torch.exp(logamp)*torch.sin(pha)
-
         spec = torch.complex(rea, imag)
-
         audio_wb = torch.istft(spec, self.h.n_fft, hop_length=self.h.hop_size, win_length=self.h.win_size, window=torch.hann_window(self.h.win_size).to(latent.device), center=True) # [B, 1, T_high]
         return logamp, pha, rea, imag, audio_wb.unsqueeze(1)
 
@@ -424,7 +350,6 @@ class DiscriminatorP(torch.nn.Module):
         x = torch.flatten(x, 1, -1)
 
         return x, fmap
-
 
 class MultiPeriodDiscriminator(torch.nn.Module):
     def __init__(self):

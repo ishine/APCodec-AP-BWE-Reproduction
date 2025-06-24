@@ -6,6 +6,9 @@ import torchaudio.transforms as T
 import numpy as np
 from rich.progress import track
 from pystoi.stoi import stoi
+import json
+import jiwer
+import editdistance
 
 
 def stft(audio, n_fft=2048, hop_length=512):
@@ -75,10 +78,20 @@ def cal_stoi_score(pred, target, sr):
     target_np = target.squeeze().cpu().numpy()
     return stoi(target_np, pred_np, sr, extended=False)
 
+def cal_wer(pred_text, target_text):
+    return jiwer.wer(target_text, pred_text)
 
 def main(h):
 
     wav_indexes = os.listdir(h.reference_wav_dir)
+    
+    predicted_label_dir = ""
+    truth_label_dir = "/mnt/nvme_share/srt30/Datasets/VCTK-0.92/txt/test_labels.json"
+
+    with open(predicted_label_dir, 'r', encoding='utf-8') as f:
+        predicted_labels = json.load(f)
+    with open(truth_label_dir, 'r', encoding='utf-8') as f:
+        truth_labels = json.load(f)
     
     metrics = {
         'lsd':[], 'apd_ip': [], 'apd_gd': [], 'apd_iaf': [],
@@ -86,6 +99,7 @@ def main(h):
     }
 
     for wav_index in track(wav_indexes):
+        file_id = wav_index.split('.')[0]
 
         ref_path = os.path.join(h.reference_wav_dir, wav_index)
         syn_path = os.path.join(h.synthesis_wav_dir, wav_index)
@@ -104,6 +118,12 @@ def main(h):
 
         stoi_score = cal_stoi_score(syn_wav, ref_wav, sr=ref_sr)
 
+        if file_id in predicted_labels and file_id in truth_labels:
+            pred_text = predicted_labels[file_id]['text']
+            target_text = truth_labels[file_id]['text']
+            wer_score = cal_wer(pred_text, target_text)
+            metrics['wer'].append(torch.tensor(wer_score))
+
         metrics['lsd'].append(lsd_score)
         metrics['apd_ip'].append(apd_score[0])
         metrics['apd_gd'].append(apd_score[1])
@@ -119,6 +139,7 @@ def main(h):
     print('APD_IAF: {:.3f}'.format(torch.stack(metrics['apd_iaf']).mean()))
     print('MCD: {:.3f}'.format(torch.stack(metrics['mcd']).mean()))
     print('STOI: {:.3f}'.format(torch.stack(metrics['stoi']).mean()))
+    print('CER: {:.3f}'.format(torch.stack(metrics['cer']).mean()))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

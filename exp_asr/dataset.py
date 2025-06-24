@@ -68,7 +68,7 @@ def get_dataset_filelist(input_training_wav_list, input_validation_wav_list):
 
 class Dataset(torch.utils.data.Dataset):
     def __init__(self, training_files, segment_size, n_fft, num_mels_for_loss,
-                 hop_size, win_size, sampling_rate, low_sampling_rate, ratio, label_path, split=True, shuffle=True, n_cache_reuse=1,
+                 hop_size, win_size, sampling_rate, ratio, label_path, split=True, shuffle=True, n_cache_reuse=1,
                  device=None, rank=0):
         self.audio_files = training_files
         random.seed(1234 + rank)  # Use rank-specific seed for shuffling
@@ -76,7 +76,6 @@ class Dataset(torch.utils.data.Dataset):
             random.shuffle(self.audio_files)
         self.segment_size = segment_size
         self.sampling_rate = sampling_rate
-        self.low_sampling_rate = low_sampling_rate
         self.ratio = ratio
         self.split = split
         self.n_fft = n_fft
@@ -115,38 +114,24 @@ class Dataset(torch.utils.data.Dataset):
             audio = self.cached_wav
             self._cache_ref_count -= 1
 
-        audio_hr = torch.FloatTensor(audio)  # [T]
-        audio_hr = audio_hr.unsqueeze(0)  # [1, T]
-        original_length = audio_hr.size(1)
+        audio = torch.FloatTensor(audio)  # [T]
+        audio = audio.unsqueeze(0)  # [1, T]
 
-        # 再进行下采样
-        audio_lr = F_audio.resample(audio_hr, orig_freq=self.sampling_rate, new_freq=self.low_sampling_rate)
-        audio_lr = F_audio.resample(audio_lr, orig_freq=self.low_sampling_rate, new_freq=self.sampling_rate)
-
-        # 强制使 audio_lr 长度与 audio_hr 一致
-        if audio_lr.size(1) != original_length:
-            if audio_lr.size(1) > original_length:
-                audio_lr = audio_lr[:, :original_length]
-            else:
-                audio_lr = torch.nn.functional.pad(audio_lr, (0, original_length - audio_lr.size(1)), 'constant')
-
-        if audio_hr.size(1) - (audio_hr.size(1)//self.hop_size) * self.hop_size > 0:
-            audio_hr = audio_hr[:, 0:-(audio_hr.size(1) - (audio_hr.size(1)//self.hop_size) * self.hop_size)]
-        if (audio_hr.size(1)//self.hop_size + 1) % self.ratio > 0:
-            audio_hr = audio_hr[:,0: (((audio_hr.size(1)//self.hop_size + 1) // self.ratio) * self.ratio - 1) * self.hop_size]
-        if audio_lr.size(1) - (audio_lr.size(1)//self.hop_size) * self.hop_size > 0:
-            audio_lr = audio_lr[:, 0:-(audio_lr.size(1) - (audio_lr.size(1)//self.hop_size) * self.hop_size)]
-        if (audio_lr.size(1)//self.hop_size + 1) % self.ratio > 0:
-            audio_lr = audio_lr[:,0: (((audio_lr.size(1)//self.hop_size + 1) // self.ratio) * self.ratio - 1) * self.hop_size]
+        if audio.size(1) - (audio.size(1)//self.hop_size) * self.hop_size > 0:
+            audio = audio[:, 0:-(audio.size(1) - (audio.size(1)//self.hop_size) * self.hop_size)]
+        if (audio.size(1)//self.hop_size + 1) % self.ratio > 0:
+            audio = audio[:,0: (((audio.size(1)//self.hop_size + 1) // self.ratio) * self.ratio - 1) * self.hop_size]
 
         # 获取文本标签
         text_label = []
         target_length = 0
+        input_length = 0
         if basename in self.label_dict:
             text_label = self.label_dict[basename]['indices']
             target_length = self.label_dict[basename]['target_length']
+            input_length = math.ceil(audio.size(1) / (self.hop_size * self.ratio))
 
-        return (audio_hr.squeeze(), audio_lr.squeeze(), text_label, target_length)
+        return (audio.squeeze(),text_label, target_length, input_length)
 
     def __len__(self):
         return len(self.audio_files)

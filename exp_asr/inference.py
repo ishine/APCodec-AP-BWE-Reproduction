@@ -31,6 +31,25 @@ def scan_checkpoint(cp_dir, prefix):
         return ''
     return sorted(cp_list)[-1]
 
+def greedy_decode(log_probs, vocab):
+    """
+    对 CTC log_probs 进行贪婪解码，生成 token 索引和文本。
+    log_probs: [T, B, V]
+    vocab: 索引到字符的映射表
+    返回: (token 索引列表, 文本)
+    """
+    pred_ids = torch.argmax(log_probs, dim=-1)  # [T, B]
+    pred_ids = pred_ids.permute(1, 0)  # [B, T]
+    indices = []
+    text = []
+    prev = None
+    for idx in pred_ids[0].cpu().numpy():  # 假设批量大小为 1
+        if idx != 0 and idx != prev:  # 0 是 <blank>
+            indices.append(int(idx))
+            text.append(vocab[idx])
+        prev = idx
+    return indices, ''.join(text)
+
 
 def inference(h):
     encoder = Encoder(h).to(device)
@@ -44,22 +63,36 @@ def inference(h):
     filelist = sorted(os.listdir(h.test_input_wavs_dir))
 
     os.makedirs(h.test_wav_output_dir, exist_ok=True)
+    os.makedirs(h.test_label_output_dir, exist_ok=True)
 
     encoder.eval()
     decoder.eval()
 
+    vocab = {
+        0: '<blank>', 1: 'a', 2: 'b', 3: 'c', 4: 'd', 5: 'e', 6: 'f', 7: 'g',
+        8: 'h', 9: 'i', 10: 'j', 11: 'k', 12: 'l', 13: 'm', 14: 'n', 15: 'o',
+        16: 'p', 17: 'q', 18: 'r', 19: 's', 20: 't', 21: 'u', 22: 'v', 23: 'w',
+        24: 'x', 25: 'y', 26: 'z'
+        }
+    
+    predicted_labels = {}
+
     with torch.no_grad():
         for i, filename in enumerate(filelist):
-
             raw_wav, _ = librosa.load(os.path.join(h.test_input_wavs_dir, filename), sr=h.sampling_rate, mono=True)
             raw_wav = torch.FloatTensor(raw_wav).to(device)
-            raw_wav_lr = F_audio.resample(raw_wav.unsqueeze(0), orig_freq=48000, new_freq=8000)
-            raw_wav_lr = F_audio.resample(raw_wav_lr, orig_freq=8000, new_freq=48000)
-
-            logamp, pha, _, _ = amp_pha_specturm(raw_wav_lr, h.n_fft, h.hop_size, h.win_size)
-            
-            latent,_,_ = encoder(logamp, pha)
+            raw_wav = raw_wav.unsqueeze(0)
+            logamp, pha, _, _, = amp_pha_specturm(raw_wav, h.n_fft, h.hop_size, h.win_size)
+            latent,_,_,_,_,log_probs = encoder(logamp, pha)
+            indices, pred_text = greedy_decode(log_probs, vocab)
             logamp_g, pha_g, _, _, y_g = decoder(latent)
+
+            file_id = filename.split('.')[0]  # 例如 p364_060
+            predicted_labels[file_id] = {
+                "indices": str(indices),  # 格式如 "[23,8,25,...]"
+                "target_length": len(indices),
+                "text": pred_text
+            }
             latent = latent.squeeze()
             audio = y_g.squeeze()
             logamp = logamp_g.squeeze()
@@ -70,12 +103,14 @@ def inference(h):
             pha = pha.cpu().numpy()
 
             sf.write(os.path.join(h.test_wav_output_dir, filename.split('.')[0]+'.wav'), audio, h.sampling_rate,'PCM_16')
-
+    
+    with open(os.path.join(h.test_label_output_dir, 'predicted_labels.json'), 'w', encoding='utf-8') as f:
+        json.dump(predicted_labels, f, ensure_ascii=False, indent=4)
 
 def main():
     print('Initializing Inference Process..')
 
-    config_file = '/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_0/config.json'
+    config_file = '/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_asr/config.json'
 
     with open(config_file) as f:
         data = f.read()
