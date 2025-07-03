@@ -61,6 +61,7 @@ def inference(h):
     total_bits = 0  # 总比特数
 
     with torch.no_grad():
+        start_time = time.time()
         for i, filename in enumerate(filelist):
 
             raw_wav, sr = librosa.load(os.path.join(h.test_input_wavs_dir, filename), sr=h.sampling_rate, mono=True)
@@ -87,15 +88,16 @@ def inference(h):
             pha = pha.cpu().numpy()
 
             sf.write(os.path.join(h.test_wav_output_dir, filename.split('.')[0]+'.wav'), audio, h.sampling_rate,'PCM_16')
-
+        total_inference_time = time.time() - start_time
     bitrate_kbps = (total_bits / total_duration) / 1000
+    logging.info(f"Total inference time: {total_inference_time:.2f} seconds")
     logging.info(f"Total duration: {total_duration:.3f} seconds, Total bits: {total_bits}, Bitrate: {bitrate_kbps:.3f} kbps")
 
 
 def main():
     print('Initializing Inference Process..')
 
-    config_file = 'config.json'
+    config_file = '/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_16k/config.json'
 
     with open(config_file) as f:
         data = f.read()

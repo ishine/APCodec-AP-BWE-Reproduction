@@ -162,8 +162,8 @@ class Encoder(torch.nn.Module):
         encode = torch.cat((logamp_encode, pha_encode), -2) 
 
         latent = self.latent_output_conv(encode)
-        latent,_,commitment_loss = self.quantizer(latent)
-        return latent,commitment_loss
+        latent,codes,commitment_loss = self.quantizer(latent)
+        return latent,codes,commitment_loss
 
 class APNet_BWE_Model(torch.nn.Module):
     def __init__(self, h):

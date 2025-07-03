@@ -220,7 +220,7 @@ def train(rank, world_size, h):
                 logamp_wb, pha_wb, rea_wb, imag_wb = amp_pha_specturm(audio_wb.squeeze(1), h.n_fft, h.hop_size, h.win_size)
                 logamp_nb, pha_nb, rea_nb, imag_nb = amp_pha_specturm(audio_nb.squeeze(1), h.n_fft, h.hop_size, h.win_size)
 
-                latent, commitment_loss, codebook_loss = encoder(logamp_nb, pha_nb)
+                latent,_, commitment_loss, codebook_loss = encoder(logamp_nb, pha_nb)
                 logamp_wb_g, pha_wb_g, rea_wb_g, imag_wb_g, y_wb_g = decoder(latent)
                 
                 y_wb_g_mel = mel_spectrogram(y_wb_g.squeeze(1), h.n_fft, h.num_mels_for_loss ,h.sampling_rate, h.hop_size, h.win_size, 0, None,)
@@ -375,7 +375,7 @@ def train(rank, world_size, h):
                             logamp_wb, pha_wb, rea_wb, imag_wb = amp_pha_specturm(audio_wb.squeeze(1), h.n_fft, h.hop_size, h.win_size)
                             logamp_nb, pha_nb, rea_nb, imag_nb = amp_pha_specturm(audio_nb.squeeze(1), h.n_fft, h.hop_size, h.win_size)
 
-                            latent, _, _ = encoder(logamp_nb.to(device), pha_nb.to(device))
+                            latent, _, _, _ = encoder(logamp_nb.to(device), pha_nb.to(device))
                             logamp_wb_g, pha_wb_g, rea_wb_g, imag_wb_g, y_wb_g = decoder(latent)
 
                             y_wb_mel = mel_spectrogram(audio_wb.squeeze(1), h.n_fft, h.num_mels_for_loss, h.sampling_rate, h.hop_size, h.win_size, 0, None, center=True)

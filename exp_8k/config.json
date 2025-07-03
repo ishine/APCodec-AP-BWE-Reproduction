@@ -2,7 +2,7 @@
     "input_training_wav_list": "/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav8/origin/waveform_8k_train.scp",
     "input_validation_wav_list": "/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav8/origin/waveform_8k_valid.scp",
     "test_input_wavs_dir":"/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav8/origin/test",
-    "test_wav_output_dir":"/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_8k/output_wav_220k",
+    "test_wav_output_dir":"/mnt/nvme_share/srt30/checkpoint/exp_8k/output_wav_860k",
 
     "batch_size": 48,
     "learning_rate": 0.0002,
@@ -16,8 +16,8 @@
     "summary_interval": 100,
     "validation_interval": 5000,
     "checkpoint_path": "/mnt/nvme_share/srt30/checkpoint/exp_8k/cp_Encoder_Decoder",
-    "checkpoint_file_load_Encoder": "/mnt/nvme_share/srt30/checkpoint/exp_8k/cp_Encoder_Decoder/encoder_00220000",
-    "checkpoint_file_load_Decoder": "/mnt/nvme_share/srt30/checkpoint/exp_8k/cp_Encoder_Decoder/decoder_00220000",
+    "checkpoint_file_load_Encoder": "/mnt/nvme_share/srt30/checkpoint/exp_8k/cp_Encoder_Decoder/encoder_00860000",
+    "checkpoint_file_load_Decoder": "/mnt/nvme_share/srt30/checkpoint/exp_8k/cp_Encoder_Decoder/decoder_00860000",
 
     "AMP_Encoder_channel": 256,
     "AMP_Encoder_resblock_kernel_sizes": [3,7,11],

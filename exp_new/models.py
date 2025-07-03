@@ -7,14 +7,11 @@ from exp_new.utils import init_weights, get_padding
 import numpy as np
 from exp_new.quantize import ResidualVectorQuantize
 import torchaudio.functional as F_audio
-from exp_new.dataset import Dataset, amp_pha_specturm, get_dataset_filelist, mel_spectrogram
 
 LRELU_SLOPE = 0.1
 
 
 class GRN(nn.Module):
-    """ GRN (Global Response Normalization) layer
-    """
     def __init__(self, dim):
         super().__init__()
         self.gamma = nn.Parameter(torch.zeros(1, 1, dim))
@@ -22,22 +19,12 @@ class GRN(nn.Module):
 
     def forward(self, x):
         Gx = torch.norm(x, p=2, dim=1, keepdim=True)
-        Nx = Gx / (Gx.mean(dim=-1, keepdim=True) + 1e-2)  # 增大epsilon
+        Nx = Gx / (Gx.mean(dim=-1, keepdim=True) + 1e-6)  # 增大epsilon
         if torch.isnan(Nx).any():
             print("NaN in GRN Nx")
         return self.gamma * (x * Nx) + self.beta + x
 
 class ConvNeXtBlock(nn.Module):
-    """ConvNeXt Block adapted from https://github.com/facebookresearch/ConvNeXt to 1D audio signal.
-
-    Args:
-        dim (int): Number of input channels.
-        intermediate_dim (int): Dimensionality of the intermediate layer.
-        layer_scale_init_value (float, optional): Initial value for the layer scale. None means no scaling.
-            Defaults to None.
-        adanorm_num_embeddings (int, optional): Number of embeddings for AdaLayerNorm.
-            None means non-conditional LayerNorm. Defaults to None.
-    """
 
     def __init__(
         self,
@@ -141,23 +128,15 @@ class Encoder(torch.nn.Module):
 
     def _init_weights(self, m):
         if isinstance(m, (nn.Conv1d, nn.Linear)):
-            nn.init.trunc_normal_(m.weight, std=0.1) # 减小std
-            nn.init.constant_(m.bias, 0)
+            # 改为He初始化（适合ReLU系列激活函数）
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, logamp, pha):
-        
-        if torch.isnan(logamp).any():
-            print(" NaN detected in logamp in logamp")
-        print(f"logamp的形状{logamp.shape}")   
-
+          
         logamp_encode = self.embed_logamp(logamp)
-
-        print("logamp stats:", logamp.min(), logamp.max())
-        print("embed_logamp.weight stats:", self.embed_logamp.weight.min(), self.embed_logamp.weight.max())
-        if torch.isnan(logamp_encode).any():
-            print("NaN after embed_logamp!")
-
-        logamp_encode = self.norm_logamp(logamp_encode.transpose(1, 2) + 1e-5)  # 添加epsilon
+        logamp_encode = self.norm_logamp(logamp_encode.transpose(1, 2))  # 添加epsilon
         logamp_encode = logamp_encode.transpose(1, 2)
         for conv_block in self.convnext_logamp:
             logamp_encode = conv_block(logamp_encode, cond_embedding_id=None)
@@ -178,99 +157,10 @@ class Encoder(torch.nn.Module):
         encode = torch.cat((logamp_encode, pha_encode), -2)
 
         latent = self.latent_output_conv(encode)
-
-        if torch.isnan(latent).any():
-            print("NaN before quantizer")
-
-        print(f"latent的形状{latent.shape}")
-        print("latent stats:", latent.min(), latent.max())
         latent,_,_,commitment_loss,codebook_loss = self.quantizer(latent)
-
-        if torch.isnan(latent).any():
-            print("NaN after quantizer")
-        if torch.isnan(commitment_loss):
-            print("NaN in commitment loss")
 
         return latent,commitment_loss,codebook_loss
 
-class APNet_BWE_Model(torch.nn.Module):
-    def __init__(self, h):
-        super(APNet_BWE_Model, self).__init__()
-        self.h = h
-        self.adanorm_num_embeddings = None
-        self.num_layers=8
-        layer_scale_init_value =  1 / self.num_layers
-        self.ConvNeXt_channels = 512
-        self.intermediate_dim=512
-        self.conv_pre_mag = nn.Conv1d(h.n_fft//2+1, self.ConvNeXt_channels, 7, 1, padding=get_padding(7, 1))
-        self.norm_pre_mag = nn.LayerNorm(self.ConvNeXt_channels, eps=1e-6)
-        self.conv_pre_pha = nn.Conv1d(h.n_fft//2+1, self.ConvNeXt_channels, 7, 1, padding=get_padding(7, 1))
-        self.norm_pre_pha = nn.LayerNorm(self.ConvNeXt_channels, eps=1e-6)
-
-        self.convnext_mag = nn.ModuleList(
-            [
-                ConvNeXtBlock(
-                    dim=self.ConvNeXt_channels,
-                    intermediate_dim=self.intermediate_dim,
-                    layer_scale_init_value=layer_scale_init_value,
-                    adanorm_num_embeddings=self.adanorm_num_embeddings,
-                )
-                for _ in range(self.num_layers)
-            ]
-        )
-
-        self.convnext_pha = nn.ModuleList(
-            [
-                ConvNeXtBlock(
-                    dim=self.ConvNeXt_channels,
-                    intermediate_dim=self.intermediate_dim,
-                    layer_scale_init_value=layer_scale_init_value,
-                    adanorm_num_embeddings=self.adanorm_num_embeddings,
-                )
-                for _ in range(self.num_layers)
-            ]
-        )
-
-        self.norm_post_mag = nn.LayerNorm(self.ConvNeXt_channels, eps=1e-6)
-        self.norm_post_pha = nn.LayerNorm(self.ConvNeXt_channels, eps=1e-6)
-        self.apply(self._init_weights)
-        self.linear_post_mag = nn.Linear(self.ConvNeXt_channels, h.n_fft//2+1)
-        self.linear_post_pha_r = nn.Linear(self.ConvNeXt_channels, h.n_fft//2+1)
-        self.linear_post_pha_i = nn.Linear(self.ConvNeXt_channels, h.n_fft//2+1)
-
-    def _init_weights(self, m):
-        if isinstance(m, (nn.Conv1d, nn.Linear)):
-            nn.init.trunc_normal_(m.weight, std=0.1)
-            nn.init.constant_(m.bias, 0)
-
-    def forward(self, mag_nb, pha_nb):
-
-        x_mag = self.conv_pre_mag(mag_nb)
-        x_pha = self.conv_pre_pha(pha_nb)
-        x_mag = self.norm_pre_mag(x_mag.transpose(1, 2)).transpose(1, 2)
-        x_pha = self.norm_pre_pha(x_pha.transpose(1, 2)).transpose(1, 2)
-
-        for name, param in self.norm_pre_pha.named_parameters():
-            if torch.isnan(param).any():
-                print(f"NaN in norm_pre_pha weight: {name}")
-            print(f"{name} max: {param.max().item()}, min: {param.min().item()}")
-
-        for conv_block_mag, conv_block_pha in zip(self.convnext_mag, self.convnext_pha):
-            x_mag = x_mag + x_pha
-            x_pha = x_pha + x_mag
-            x_mag = conv_block_mag(x_mag, cond_embedding_id=None)
-            x_pha = conv_block_pha(x_pha, cond_embedding_id=None)
-
-        x_mag = self.norm_post_mag(x_mag.transpose(1, 2))
-        mag_wb = mag_nb + self.linear_post_mag(x_mag).transpose(1, 2)
-
-        x_pha = self.norm_post_pha(x_pha.transpose(1, 2))
-        x_pha_r = self.linear_post_pha_r(x_pha)
-        x_pha_i = self.linear_post_pha_i(x_pha)
-        pha_wb = torch.atan2(x_pha_i, x_pha_r).transpose(1, 2)
-
-        
-        return mag_wb, pha_wb
 
 class Decoder(torch.nn.Module):
     def __init__(self, h):
@@ -336,13 +226,12 @@ class Decoder(torch.nn.Module):
         self.PHA_Decoder_output_R_conv.apply(init_weights)
         self.PHA_Decoder_output_I_conv.apply(init_weights)
 
-        #带宽恢复
-        self.BWE = APNet_BWE_Model(h)
-
     def _init_weights(self, m):
         if isinstance(m, (nn.Conv1d, nn.Linear)):
-            nn.init.trunc_normal_(m.weight, std=0.1)
-            nn.init.constant_(m.bias, 0)
+            # 改为He初始化（适合ReLU系列激活函数）
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, latent):
 
@@ -372,19 +261,86 @@ class Decoder(torch.nn.Module):
         rea = torch.exp(logamp)*torch.cos(pha)
         imag = torch.exp(logamp)*torch.sin(pha)
         spec = torch.complex(rea, imag)
+
         audio_nb = torch.istft(spec, self.h.n_fft, hop_length=self.h.hop_size, win_length=self.h.win_size, window=torch.hann_window(self.h.win_size).to(latent.device), center=True) # [B, 1, T_low]
         audio_nb = F_audio.resample(audio_nb, orig_freq=self.h.low_sampling_rate, new_freq=self.h.sampling_rate)
-        logamp_nb, pha_nb, _, _ = amp_pha_specturm(audio_nb, self.h.n_fft, self.h.hop_size, self.h.win_size)
 
-        #带宽恢复
-        #logamp_wb, pha_wb = self.BWE(logamp_nb, pha_nb)
+        return audio_nb.unsqueeze(1)
 
-        rea_nb = torch.exp(logamp_nb)*torch.cos(pha_nb)
-        imag_nb = torch.exp(logamp_nb)*torch.sin(pha_nb)
-        #spec_wb = torch.complex(rea_wb, imag_wb)
-        #audio_wb = torch.istft(spec_wb, self.h.n_fft, hop_length=self.h.hop_size, win_length=self.h.win_size, window=torch.hann_window(self.h.win_size).to(latent.device), center=True) # [B, 1, T_high]
+class BWE(torch.nn.Module):
+    def __init__(self, h):
+        super(BWE, self).__init__()
+        self.h = h
+        self.adanorm_num_embeddings = None
+        self.num_layers=8
+        layer_scale_init_value =  1 / self.num_layers
+        self.ConvNeXt_channels = 512
+        self.intermediate_dim=512
+        self.conv_pre_mag = nn.Conv1d(h.n_fft//2+1, self.ConvNeXt_channels, 7, 1, padding=get_padding(7, 1))
+        self.norm_pre_mag = nn.LayerNorm(self.ConvNeXt_channels, eps=1e-6)
+        self.conv_pre_pha = nn.Conv1d(h.n_fft//2+1, self.ConvNeXt_channels, 7, 1, padding=get_padding(7, 1))
+        self.norm_pre_pha = nn.LayerNorm(self.ConvNeXt_channels, eps=1e-6)
 
-        return logamp_nb, pha_nb, rea_nb, imag_nb, audio_nb.unsqueeze(1)
+        self.convnext_mag = nn.ModuleList(
+            [
+                ConvNeXtBlock(
+                    dim=self.ConvNeXt_channels,
+                    intermediate_dim=self.intermediate_dim,
+                    layer_scale_init_value=layer_scale_init_value,
+                    adanorm_num_embeddings=self.adanorm_num_embeddings,
+                )
+                for _ in range(self.num_layers)
+            ]
+        )
+
+        self.convnext_pha = nn.ModuleList(
+            [
+                ConvNeXtBlock(
+                    dim=self.ConvNeXt_channels,
+                    intermediate_dim=self.intermediate_dim,
+                    layer_scale_init_value=layer_scale_init_value,
+                    adanorm_num_embeddings=self.adanorm_num_embeddings,
+                )
+                for _ in range(self.num_layers)
+            ]
+        )
+
+        self.norm_post_mag = nn.LayerNorm(self.ConvNeXt_channels, eps=1e-6)
+        self.norm_post_pha = nn.LayerNorm(self.ConvNeXt_channels, eps=1e-6)
+        self.apply(self._init_weights)
+        self.linear_post_mag = nn.Linear(self.ConvNeXt_channels, h.n_fft//2+1)
+        self.linear_post_pha_r = nn.Linear(self.ConvNeXt_channels, h.n_fft//2+1)
+        self.linear_post_pha_i = nn.Linear(self.ConvNeXt_channels, h.n_fft//2+1)
+
+    def _init_weights(self, m):
+        if isinstance(m, (nn.Conv1d, nn.Linear)):
+            # 改为He初始化（适合ReLU系列激活函数）
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, mag_nb, pha_nb):
+
+        x_mag = self.conv_pre_mag(mag_nb)
+        x_pha = self.conv_pre_pha(pha_nb)
+        x_mag = self.norm_pre_mag(x_mag.transpose(1, 2)).transpose(1, 2)
+        x_pha = self.norm_pre_pha(x_pha.transpose(1, 2)).transpose(1, 2)
+
+        for conv_block_mag, conv_block_pha in zip(self.convnext_mag, self.convnext_pha):
+            x_mag = x_mag + x_pha
+            x_pha = x_pha + x_mag
+            x_mag = conv_block_mag(x_mag, cond_embedding_id=None)
+            x_pha = conv_block_pha(x_pha, cond_embedding_id=None)
+
+        x_mag = self.norm_post_mag(x_mag.transpose(1, 2))
+        mag_wb = mag_nb + self.linear_post_mag(x_mag).transpose(1, 2)
+
+        x_pha = self.norm_post_pha(x_pha.transpose(1, 2))
+        x_pha_r = self.linear_post_pha_r(x_pha)
+        x_pha_i = self.linear_post_pha_i(x_pha)
+        pha_wb = torch.atan2(x_pha_i, x_pha_r).transpose(1, 2)
+
+        return mag_wb, pha_wb
 
 class DiscriminatorP(torch.nn.Module):
     def __init__(self, period, kernel_size=5, stride=3, use_spectral_norm=False):

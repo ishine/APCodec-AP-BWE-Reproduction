@@ -12,10 +12,19 @@ import soundfile as sf
 import librosa
 import numpy as np
 import torchaudio.functional as F_audio
+import time  
+import logging  
+import math  
 
 h = None
 device = None
 
+# 设置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]  # 同时输出到终端
+)
 
 def load_checkpoint(filepath, device):
     assert os.path.isfile(filepath)
@@ -48,18 +57,33 @@ def inference(h):
     encoder.eval()
     decoder.eval()
 
+    codebook_size = 1024
+
+    total_inference_time = 0.0 # 记录总推理时间
+    total_duration = 0.0  # 总音频时长
+    total_bits = 0  # 总比特数
+
     with torch.no_grad():
+        start_time = time.time()
         for i, filename in enumerate(filelist):
 
-            raw_wav, _ = librosa.load(os.path.join(h.test_input_wavs_dir, filename), sr=h.sampling_rate, mono=True)
+            raw_wav, sr = librosa.load(os.path.join(h.test_input_wavs_dir, filename), sr=h.sampling_rate, mono=True)
+            duration = len(raw_wav) / sr
+            total_duration += duration
             raw_wav = torch.FloatTensor(raw_wav).to(device)
             raw_wav_lr = F_audio.resample(raw_wav.unsqueeze(0), orig_freq=48000, new_freq=8000)
             raw_wav_lr = F_audio.resample(raw_wav_lr, orig_freq=8000, new_freq=48000)
 
             logamp, pha, _, _ = amp_pha_specturm(raw_wav_lr, h.n_fft, h.hop_size, h.win_size)
-            
-            latent,_ = encoder(logamp, pha)
+            latent,codes,_ = encoder(logamp, pha)
             logamp_g, pha_g, _, _, y_g = decoder(latent)
+            n_codebooks = codes.shape[1]  # 码本数量
+            T = codes.shape[2]  # 时间步数
+            bits_per_index = math.ceil(math.log2(codebook_size))  # 每个索引的比特数
+            bits_per_frame = n_codebooks * bits_per_index
+            file_bits = bits_per_frame * T
+            total_bits += file_bits
+
             latent = latent.squeeze()
             audio = y_g.squeeze()
             logamp = logamp_g.squeeze()
@@ -70,7 +94,11 @@ def inference(h):
             pha = pha.cpu().numpy()
 
             sf.write(os.path.join(h.test_wav_output_dir, filename.split('.')[0]+'.wav'), audio, h.sampling_rate,'PCM_16')
-
+        # 结束计时
+        total_inference_time = time.time() - start_time
+    bitrate_kbps = (total_bits / total_duration) / 1000
+    logging.info(f"Total inference time: {total_inference_time:.2f} seconds")
+    logging.info(f"Total duration: {total_duration:.2f} seconds, Total bits: {total_bits}, Bitrate: {bitrate_kbps:.2f} kbps")
 
 def main():
     print('Initializing Inference Process..')

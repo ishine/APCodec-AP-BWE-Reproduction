@@ -52,7 +52,7 @@ def amp_pha_specturm(y, n_fft, hop_size, win_size):
     stft_spec = torch.view_as_real(stft_spec)  # [batch_size, n_fft//2+1, frames, 2]
     rea = stft_spec[:, :, :, 0]
     imag = stft_spec[:, :, :, 1]
-    log_amplitude = torch.log(torch.abs(torch.sqrt(torch.pow(rea, 2) + torch.pow(imag, 2))) + 1e-5)
+    log_amplitude = torch.log(torch.abs(torch.sqrt(torch.pow(rea, 2) + torch.pow(imag, 2))) + 1e-2)
     phase = torch.atan2(imag, rea)
     return log_amplitude, phase, rea, imag
 

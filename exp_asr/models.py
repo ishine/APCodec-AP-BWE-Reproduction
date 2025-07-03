@@ -156,7 +156,7 @@ class Encoder(torch.nn.Module):
         self.latent_output_conv.apply(init_weights)
 
         # 添加 CTC 头
-        self.ctc_head = CTCHead(input_dim=h.latent_dim, vocab_size=27)  # 假设词汇表大小为27
+        self.ctc_head = CTCHead(input_dim=h.latent_dim, vocab_size=28)  # 假设词汇表大小为27
 
         self.quantizer = ResidualFSQ(
             input_dim=h.latent_dim,
@@ -193,16 +193,14 @@ class Encoder(torch.nn.Module):
 
         encode = torch.cat((logamp_encode, pha_encode), -2) 
         latent = self.latent_output_conv(encode)
-        latent_before_quantizer = latent
+        latent_before_quantize = latent
         latent,codes,_,commitment_loss,codebook_loss = self.quantizer(latent)
 
         # CTC 前向传播
-        ctc_output = self.ctc_head(latent_before_quantizer)  # [B, T, V]
+        ctc_output = self.ctc_head(latent_before_quantize)  # [B, T, V]
         ctc_output = ctc_output.permute(1,0,2) #[T, B, V]
         log_probs = F.log_softmax(ctc_output, dim=-1)
         ctc_loss = torch.tensor(0.0, device=log_probs.device)
-        print(f"log_probs.shape:{log_probs.shape}")
-        print(f"target_lengths:{target_lengths}")
         if text_labels is not None and target_lengths is not None and input_lengths is not None:
             ctcLoss = nn.CTCLoss(blank=0, reduction="mean")
             assert (target_lengths <= input_lengths).all(), "CTC target longer than input"

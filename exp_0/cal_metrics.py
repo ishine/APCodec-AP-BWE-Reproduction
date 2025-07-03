@@ -53,6 +53,8 @@ def cal_apd(pred, target):
     return apd_ip, apd_gd, apd_iaf
 
 def cal_mcd(pred, target, n_mfcc=13, sample_rate=48000, n_fft=1024, hop_size=40):
+    pred = pred.cpu()
+    target = target.cpu()
     mfcc_transform = torchaudio.transforms.MFCC(
         sample_rate=sample_rate,
         n_mfcc=n_mfcc,
@@ -61,8 +63,7 @@ def cal_mcd(pred, target, n_mfcc=13, sample_rate=48000, n_fft=1024, hop_size=40)
             'hop_length': hop_size,
             'n_mels': 80
         }
-    ).to(pred.device)
-    
+    ).to("cpu")
     mfcc_pred = mfcc_transform(pred)
     mfcc_target = mfcc_transform(target)
 
@@ -124,7 +125,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--reference_wav_dir', default='/mnt/nvme_share/srt30/AP-BWE-main/VCTK-Corpus-0.92/wav48/test')
-    parser.add_argument('--synthesis_wav_dir', default='/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_0/output_wav_1180k')
+    parser.add_argument('--synthesis_wav_dir', default='/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_0/output_wav_1600k')
 
     h = parser.parse_args()
 

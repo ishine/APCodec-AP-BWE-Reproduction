@@ -12,6 +12,7 @@ from exp_new.dataset import Dataset, amp_pha_specturm, get_dataset_filelist, mel
 from exp_new.models import (
     Decoder,
     Encoder,
+    BWE,
     MultiPeriodDiscriminator,
     MultiResolutionDiscriminator,
     MultiScaleDiscriminator,
@@ -67,12 +68,14 @@ def train(rank, world_size, h):
 
         encoder = Encoder(h).to(device)
         decoder = Decoder(h).to(device)
+        bwe = BWE(h).to(device)
         mpd = MultiPeriodDiscriminator().to(device)
         mrd = MultiResolutionDiscriminator().to(device)
 
         # 包装模型为DDP
         encoder = DistributedDataParallel(encoder, device_ids=[rank])
         decoder = DistributedDataParallel(decoder, device_ids=[rank])
+        bwe = DistributedDataParallel(bwe, device_ids=[rank])
         mpd = DistributedDataParallel(mpd, device_ids=[rank])
         mrd = DistributedDataParallel(mrd, device_ids=[rank])
 
@@ -99,13 +102,14 @@ def train(rank, world_size, h):
             state_dict_do = load_checkpoint(cp_do, device)
             encoder.module.load_state_dict(state_dict_encoder["encoder"])
             decoder.module.load_state_dict(state_dict_decoder["decoder"])
+            bwe.module.load_state_dict(state_dict_bwe["bwe"])
             mpd.module.load_state_dict(state_dict_do["mpd"])
             mrd.module.load_state_dict(state_dict_do["mrd"])
             steps = state_dict_do["steps"] + 1
             last_epoch = state_dict_do["epoch"]
 
         optim_g = torch.optim.AdamW(
-            itertools.chain(encoder.parameters(), decoder.parameters()),
+            itertools.chain(encoder.parameters(), decoder.parameters(), bwe.parameters()),
             h.learning_rate,
             betas=[h.adam_b1, h.adam_b2],
         )
@@ -204,6 +208,7 @@ def train(rank, world_size, h):
 
         encoder.train()
         decoder.train()
+        bwe.train()
         mpd.train()
         mrd.train()
 
@@ -213,6 +218,11 @@ def train(rank, world_size, h):
             # 设置epoch以确保每个epoch的数据划分不同
             train_sampler.set_epoch(epoch)
             val_sampler.set_epoch(epoch)
+            if steps == 0 and rank == 0:
+                print("初始参数检查:")
+                detect_nan_in_model(encoder, "Encoder/")
+                detect_nan_in_model(decoder, "Decoder/")
+                detect_nan_in_model(bwe, "BWE/")
             
             if rank == 0:
                 print("Epoch: {}".format(epoch + 1))
@@ -223,33 +233,23 @@ def train(rank, world_size, h):
                 audio_wb = torch.autograd.Variable(audio_wb.to(device, non_blocking=True)).unsqueeze(1)
                 audio_nb = torch.autograd.Variable(audio_nb.to(device, non_blocking=True)).unsqueeze(1)
 
-                if torch.isnan(audio_wb).any():
-                    print(" NaN detected in audio_wb in train")
-                if torch.isnan(audio_nb).any():
-                    print(" NaN detected in audio_nb in train")
-
                 logamp_wb, pha_wb, rea_wb, imag_wb = amp_pha_specturm(audio_wb.squeeze(1), h.n_fft, h.hop_size, h.win_size)
                 logamp_nb, pha_nb, rea_nb, imag_nb = amp_pha_specturm(audio_nb.squeeze(1), h.n_fft, h.hop_size, h.win_size)
 
-                if torch.isnan(logamp_nb).any():
-                    print(" NaN detected in logamp_nb in train")
-                if torch.isnan(pha_nb).any():
-                    print(" NaN detected in pha_nb in train")
-
                 latent, commitment_loss, codebook_loss = encoder(logamp_nb, pha_nb)
 
-                if torch.isnan(latent).any():
-                    print(" NaN detected in latent in train")
+                audio_nb_g = decoder(latent)
 
-                logamp_wb_g, pha_wb_g, rea_wb_g, imag_wb_g, y_wb_g = decoder(latent)
-
-                if torch.isnan(y_wb_g).any():
-                    print(" NaN detected in y_wb_g in train")
+                logamp_nb_g, pha_nb_g, rea_nb_g, imag_nb_g = amp_pha_specturm(audio_nb_g.squeeze(1), h.n_fft, h.hop_size, h.win_size)
                 
-                y_wb_g_mel = mel_spectrogram(y_wb_g.squeeze(1), h.n_fft, h.num_mels_for_loss ,h.sampling_rate, h.hop_size, h.win_size, 0, None,)
+                logamp_wb_g, pha_wb_g = bwe(logamp_nb_g, pha_nb_g)
+                rea_wb_g = torch.exp(logamp_wb_g)*torch.cos(pha_wb_g)
+                imag_wb_g = torch.exp(logamp_wb_g)*torch.sin(pha_wb_g)
+                spec_wb_g = torch.complex(rea_wb_g, imag_wb_g)
+                y_wb_g = torch.istft(spec_wb_g, h.n_fft, hop_length=h.hop_size, win_length=h.win_size, window=torch.hann_window(h.win_size).to(latent.device), center=True) 
+                y_wb_g = y_wb_g.unsqueeze(1)
 
-                if torch.isnan(y_wb_g_mel).any():
-                    print(" NaN detected in y_wb_g_mel in train")
+                y_wb_g_mel = mel_spectrogram(y_wb_g.squeeze(1), h.n_fft, h.num_mels_for_loss ,h.sampling_rate, h.hop_size, h.win_size, 0, None,)
 
                 optim_d.zero_grad()
 
@@ -318,24 +318,39 @@ def train(rank, world_size, h):
                     + commitment_loss * 2.5
                 )
 
-                if torch.isnan(L_G):
-                    print("[ERROR] Loss is NaN!")
-                    for k, v in loss_dict.items():
-                        print(f"  {k}: {v}")
-                    return
-
-
                 L_G.backward()
 
+                flag=0
                 for name, param in encoder.named_parameters():
                     if param.grad is not None and torch.isnan(param.grad).any():
-                        print(f"NaN in encoder gradient: {name}")
+                        flag=1
+                        break
+                if flag==1:
+                    print(f"NaN in encoder gradient")
+                else:
+                    print("gradient in encoder is normal")
 
+                flag=0
                 for name, param in decoder.named_parameters():
                     if param.grad is not None and torch.isnan(param.grad).any():
-                        print(f"NaN in decoder gradient: {name}")
+                        flag=1
+                        break
+                if flag==1:
+                    print(f"NaN in decoder gradient")
+                else:
+                    print("gradient in decoder is normal")
+
+                flag=0
+                for name, param in bwe.named_parameters():
+                    if param.grad is not None and torch.isnan(param.grad).any():
+                        flag=1
+                        break
+                if flag==1:
+                    print(f"NaN in bwe gradient")
+                else:
+                    print("gradient in bwe is normal")
                 
-                torch.nn.utils.clip_grad_norm_(itertools.chain(encoder.parameters(), decoder.parameters()), max_norm=1.0)
+                torch.nn.utils.clip_grad_value_(itertools.chain(encoder.parameters(), decoder.parameters(), bwe.parameters()), clip_value=0.5)
 
                 optim_g.step()
 
@@ -378,6 +393,8 @@ def train(rank, world_size, h):
                     save_checkpoint(checkpoint_path, {"encoder": encoder.module.state_dict()})
                     checkpoint_path = "{}/decoder_{:08d}".format(h.checkpoint_path, steps)
                     save_checkpoint(checkpoint_path, {"decoder": decoder.module.state_dict()})
+                    checkpoint_path = "{}/bwe_{:08d}".format(h.checkpoint_path, steps)
+                    save_checkpoint(checkpoint_path, {"bwe": bwe.module.state_dict()})
                     checkpoint_path = "{}/do_{:08d}".format(h.checkpoint_path, steps)
                     save_checkpoint(
                         checkpoint_path,
@@ -400,6 +417,7 @@ def train(rank, world_size, h):
                 if steps % h.validation_interval == 0 and rank == 0:  # 只在主进程进行验证
                     encoder.eval()
                     decoder.eval()
+                    bwe.eval()
                     torch.cuda.empty_cache()
                     val_A_err_tot = 0
                     val_IP_err_tot = 0
@@ -419,20 +437,21 @@ def train(rank, world_size, h):
                             logamp_wb, pha_wb, rea_wb, imag_wb = amp_pha_specturm(audio_wb.squeeze(1), h.n_fft, h.hop_size, h.win_size)
                             logamp_nb, pha_nb, rea_nb, imag_nb = amp_pha_specturm(audio_nb.squeeze(1), h.n_fft, h.hop_size, h.win_size)
 
-                            if torch.isnan(logamp_nb).any() or torch.isinf(logamp_nb).any():
-                                print("在编码器前logamp_nb检测到NaN或Inf")
-                            if torch.isnan(pha_nb).any() or torch.isinf(pha_nb).any():
-                                print("在编码器前pha_nb检测到NaN或Inf")
+                            latent, commitment_loss, codebook_loss = encoder(logamp_nb, pha_nb)
 
-                            latent, _, _ = encoder(logamp_nb.to(device), pha_nb.to(device))
+                            audio_nb_g = decoder(latent)
 
-                            if torch.isnan(latent).any():
-                                print(" NaN detected in latent in validation")
-
-                            logamp_wb_g, pha_wb_g, rea_wb_g, imag_wb_g, y_wb_g = decoder(latent)
+                            logamp_nb_g, pha_nb_g, rea_nb_g, imag_nb_g = amp_pha_specturm(audio_nb_g.squeeze(1), h.n_fft, h.hop_size, h.win_size)
+                            
+                            logamp_wb_g, pha_wb_g = bwe(logamp_nb_g, pha_nb_g)
+                            rea_wb_g = torch.exp(logamp_wb_g)*torch.cos(pha_wb_g)
+                            imag_wb_g = torch.exp(logamp_wb_g)*torch.sin(pha_wb_g)
+                            spec_wb_g = torch.complex(rea_wb_g, imag_wb_g)
+                            y_wb_g = torch.istft(spec_wb_g, h.n_fft, hop_length=h.hop_size, win_length=h.win_size, window=torch.hann_window(h.win_size).to(latent.device), center=True) 
+                            y_wb_g = y_wb_g.unsqueeze(1)
 
                             y_wb_mel = mel_spectrogram(audio_wb.squeeze(1), h.n_fft, h.num_mels_for_loss, h.sampling_rate, h.hop_size, h.win_size, 0, None, center=True)
-                            y_wb_g_mel = mel_spectrogram(y_wb_g.squeeze(1), h.n_fft, h.num_mels_for_loss, h.sampling_rate, h.hop_size, h.win_size, 0, None,)
+                            y_wb_g_mel = mel_spectrogram(y_wb_g.squeeze(1), h.n_fft, h.num_mels_for_loss ,h.sampling_rate, h.hop_size, h.win_size, 0, None,)
 
                             _, _, rea_g_final, imag_g_final = amp_pha_specturm(y_wb_g.squeeze(1), h.n_fft, h.hop_size, h.win_size)
 
@@ -507,6 +526,7 @@ def train(rank, world_size, h):
 
                     encoder.train()
                     decoder.train()
+                    bwe.train()
 
                 steps += 1
 

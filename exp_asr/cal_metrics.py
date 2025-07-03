@@ -8,7 +8,6 @@ from rich.progress import track
 from pystoi.stoi import stoi
 import json
 import jiwer
-import editdistance
 
 
 def stft(audio, n_fft=2048, hop_length=512):
@@ -78,14 +77,15 @@ def cal_stoi_score(pred, target, sr):
     target_np = target.squeeze().cpu().numpy()
     return stoi(target_np, pred_np, sr, extended=False)
 
-def cal_wer(pred_text, target_text):
-    return jiwer.wer(target_text, pred_text)
+def cal_cer(pred_text, target_text):
+    return jiwer.cer(target_text, pred_text)
+
 
 def main(h):
 
     wav_indexes = os.listdir(h.reference_wav_dir)
     
-    predicted_label_dir = ""
+    predicted_label_dir = "/mnt/nvme_share/srt30/checkpoint/exp_asr/output_label_116k/predicted_labels.json"
     truth_label_dir = "/mnt/nvme_share/srt30/Datasets/VCTK-0.92/txt/test_labels.json"
 
     with open(predicted_label_dir, 'r', encoding='utf-8') as f:
@@ -95,7 +95,7 @@ def main(h):
     
     metrics = {
         'lsd':[], 'apd_ip': [], 'apd_gd': [], 'apd_iaf': [],
-        'snr':[], 'mcd':[], 'stoi':[]
+        'snr':[], 'mcd':[], 'stoi':[], 'cer':[]
     }
 
     for wav_index in track(wav_indexes):
@@ -121,8 +121,8 @@ def main(h):
         if file_id in predicted_labels and file_id in truth_labels:
             pred_text = predicted_labels[file_id]['text']
             target_text = truth_labels[file_id]['text']
-            wer_score = cal_wer(pred_text, target_text)
-            metrics['wer'].append(torch.tensor(wer_score))
+            cer_score = cal_cer(pred_text, target_text)
+            metrics['cer'].append(torch.tensor(cer_score))
 
         metrics['lsd'].append(lsd_score)
         metrics['apd_ip'].append(apd_score[0])
@@ -139,13 +139,13 @@ def main(h):
     print('APD_IAF: {:.3f}'.format(torch.stack(metrics['apd_iaf']).mean()))
     print('MCD: {:.3f}'.format(torch.stack(metrics['mcd']).mean()))
     print('STOI: {:.3f}'.format(torch.stack(metrics['stoi']).mean()))
-    print('CER: {:.3f}'.format(torch.stack(metrics['cer']).mean()))
+    print('cer: {:.3f}'.format(torch.stack(metrics['cer']).mean()))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--reference_wav_dir', default='/mnt/nvme_share/srt30/AP-BWE-main/VCTK-Corpus-0.92/wav48/test')
-    parser.add_argument('--synthesis_wav_dir', default='/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_0/output_wav_580k')
+    parser.add_argument('--reference_wav_dir', default='/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav48/origin/test')
+    parser.add_argument('--synthesis_wav_dir', default='/mnt/nvme_share/srt30/checkpoint/exp_asr/output_wav_116k')
 
     h = parser.parse_args()
 

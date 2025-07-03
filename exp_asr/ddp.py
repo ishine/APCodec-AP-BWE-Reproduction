@@ -101,7 +101,7 @@ def train(rank, world_size, h):
     if state_dict_do is not None:
         optim_g.load_state_dict(state_dict_do['optim_g'])
         optim_d.load_state_dict(state_dict_do['optim_d'])
-
+    
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=h.lr_decay, last_epoch=last_epoch)
     scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=h.lr_decay, last_epoch=last_epoch)
 
@@ -119,7 +119,7 @@ def train(rank, world_size, h):
                               pin_memory=True,
                               drop_last=True,
                               collate_fn=collate_fn)
-    
+
     if rank == 0:
         validset = Dataset(validation_filelist, h.segment_size, h.n_fft, h.num_mels_for_loss,
                            h.hop_size, h.win_size, h.sampling_rate, h.ratio, h.label_path, False, False, n_cache_reuse=0,
