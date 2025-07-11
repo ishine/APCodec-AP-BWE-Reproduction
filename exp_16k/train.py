@@ -17,25 +17,38 @@ from exp_16k.models import Encoder, Decoder, MultiPeriodDiscriminator, MultiScal
     discriminator_loss, amplitude_loss, phase_loss, STFT_consistency_loss, MultiResolutionDiscriminator
 from exp_16k.utils import AttrDict, build_env, plot_spectrogram, scan_checkpoint, load_checkpoint, save_checkpoint
 
+mp.set_start_method('spawn', force=True)
 torch.backends.cudnn.benchmark = True
 
+def remove_module_prefix(state_dict):
+    """去掉DataParallel保存的参数的module前缀"""
+    from collections import OrderedDict
+    new_state_dict = OrderedDict()
+    for k, v in state_dict.items():
+        if k.startswith("module."):
+            k = k[7:]  # 去除 "module." 前缀
+        new_state_dict[k] = v
+    return new_state_dict
 
-def train(h):
+def train(rank, world_size, h):
 
+    init_process_group(backend='nccl', init_method='env://', world_size=world_size, rank=rank)
     torch.cuda.manual_seed(h.seed)
-    device = torch.device('cuda:{:d}'.format(0))
+    torch.cuda.set_device(rank)
+    device = torch.device('cuda', rank)
 
     encoder = Encoder(h).to(device)
     decoder = Decoder(h).to(device)
     mpd = MultiPeriodDiscriminator().to(device)
     mrd = MultiResolutionDiscriminator().to(device)
 
-    print("Encoder: ")
-    print(encoder)
-    print("Decoder: ")
-    print(decoder)
-    os.makedirs(h.checkpoint_path, exist_ok=True)
-    print("checkpoints directory : ", h.checkpoint_path)
+    if rank == 0:
+        print("Encoder: ")
+        print(encoder)
+        print("Decoder: ")
+        print(decoder)
+        os.makedirs(h.checkpoint_path, exist_ok=True)
+        print("checkpoints directory : ", h.checkpoint_path)
 
     if os.path.isdir(h.checkpoint_path):
         cp_encoder = scan_checkpoint(h.checkpoint_path, 'encoder_')
@@ -50,10 +63,10 @@ def train(h):
         state_dict_encoder = load_checkpoint(cp_encoder, device)
         state_dict_decoder = load_checkpoint(cp_decoder, device)
         state_dict_do = load_checkpoint(cp_do, device)
-        encoder.load_state_dict(state_dict_encoder['encoder'])
-        decoder.load_state_dict(state_dict_decoder['decoder'])
-        mpd.load_state_dict(state_dict_do['mpd'])
-        mrd.load_state_dict(state_dict_do['mrd'])
+        encoder.load_state_dict(remove_module_prefix(state_dict_encoder['encoder']))
+        decoder.load_state_dict(remove_module_prefix(state_dict_decoder['decoder']))
+        mpd.load_state_dict(remove_module_prefix(state_dict_do['mpd']))
+        mrd.load_state_dict(remove_module_prefix(state_dict_do['mrd']))
         steps = state_dict_do['steps'] + 1
         last_epoch = state_dict_do['epoch']
 
@@ -72,23 +85,26 @@ def train(h):
     trainset = Dataset(training_filelist, h.segment_size, h.n_fft, h.num_mels_for_loss,
                        h.hop_size, h.win_size, h.sampling_rate, h.ratio, n_cache_reuse=0,
                        shuffle=True, device=device)
+    
+    train_sampler = DistributedSampler(trainset, num_replicas=world_size, rank=rank, shuffle=True)
 
     train_loader = DataLoader(trainset, num_workers=h.num_workers, shuffle=False,
                               sampler=None,
-                              batch_size=h.batch_size,
+                              batch_size=h.batch_size // world_size,
                               pin_memory=True,
                               drop_last=True)
 
-    validset = Dataset(validation_filelist, h.segment_size, h.n_fft, h.num_mels_for_loss,
-                       h.hop_size, h.win_size, h.sampling_rate, h.ratio, False, False, n_cache_reuse=0,
-                       device=device)
-    validation_loader = DataLoader(validset, num_workers=1, shuffle=False,
-                                   sampler=None,
-                                   batch_size=1,
-                                   pin_memory=True,
-                                   drop_last=True)
+    if rank == 0:
+        validset = Dataset(validation_filelist, h.segment_size, h.n_fft, h.num_mels_for_loss,
+                        h.hop_size, h.win_size, h.sampling_rate, h.ratio, False, False, n_cache_reuse=0,
+                        device=device)
+        validation_loader = DataLoader(validset, num_workers=1, shuffle=False,
+                                    sampler=None,
+                                    batch_size=1,
+                                    pin_memory=True,
+                                    drop_last=True)
 
-    sw = SummaryWriter(os.path.join(h.checkpoint_path, 'logs'))
+        sw = SummaryWriter(os.path.join(h.checkpoint_path, 'logs'))
 
     encoder.train()
     decoder.train()
@@ -97,8 +113,10 @@ def train(h):
 
     for epoch in range(max(0, last_epoch), h.training_epochs):
 
-        start = time.time()
-        print("Epoch: {}".format(epoch+1))
+        if rank == 0:
+            start = time.time()
+            print("Epoch: {}".format(epoch+1))
+        train_sampler.set_epoch(epoch)
 
         for i, batch in enumerate(train_loader):
             start_b = time.time()
@@ -164,121 +182,123 @@ def train(h):
             L_G.backward()
             optim_g.step()
 
-            # STDOUT logging
-            if steps % h.stdout_interval == 0:
-                with torch.no_grad():
-                    A_error = amplitude_loss(logamp, logamp_g).item()
-                    IP_error, GD_error, PTD_error = phase_loss(pha, pha_g, h.n_fft, pha.size()[-1])
-                    IP_error = IP_error.item()
-                    GD_error = GD_error.item()
-                    PTD_error = PTD_error.item()
-                    C_error = STFT_consistency_loss(rea_g, rea_g_final, imag_g, imag_g_final).item()
-                    R_error = F.l1_loss(rea, rea_g).item()
-                    I_error = F.l1_loss(imag, imag_g).item()
-                    Mel_error = F.l1_loss(y_mel, y_g_mel).item()
-                    Mel_L2_error = amplitude_loss(y_mel, y_g_mel).item()
-                    commit_loss = commitment_loss.item()
+            if rank ==0:
+                # STDOUT logging
+                if steps % h.stdout_interval == 0:
+                    with torch.no_grad():
+                        A_error = amplitude_loss(logamp, logamp_g).item()
+                        IP_error, GD_error, PTD_error = phase_loss(pha, pha_g, h.n_fft, pha.size()[-1])
+                        IP_error = IP_error.item()
+                        GD_error = GD_error.item()
+                        PTD_error = PTD_error.item()
+                        C_error = STFT_consistency_loss(rea_g, rea_g_final, imag_g, imag_g_final).item()
+                        R_error = F.l1_loss(rea, rea_g).item()
+                        I_error = F.l1_loss(imag, imag_g).item()
+                        Mel_error = F.l1_loss(y_mel, y_g_mel).item()
+                        Mel_L2_error = amplitude_loss(y_mel, y_g_mel).item()
+                        commit_loss = commitment_loss.item()
 
-                print('Steps : {:d}, Gen Loss Total : {:4.3f}, Amplitude Loss : {:4.3f}, Instantaneous Phase Loss : {:4.3f}, Group Delay Loss : {:4.3f}, Phase Time Difference Loss : {:4.3f}, STFT Consistency Loss : {:4.3f}, Real Part Loss : {:4.3f}, Imaginary Part Loss : {:4.3f}, Mel Spectrogram Loss : {:4.3f}, Mel Spectrogram L2 Loss : {:4.3f}, Commit Loss : {:4.3f}, s/b : {:4.3f}'.
-                      format(steps, L_G, A_error, IP_error, GD_error, PTD_error, C_error, R_error, I_error, Mel_error, Mel_L2_error, commit_loss, time.time() - start_b))
+                    print('Steps : {:d}, Gen Loss Total : {:4.3f}, Amplitude Loss : {:4.3f}, Instantaneous Phase Loss : {:4.3f}, Group Delay Loss : {:4.3f}, Phase Time Difference Loss : {:4.3f}, STFT Consistency Loss : {:4.3f}, Real Part Loss : {:4.3f}, Imaginary Part Loss : {:4.3f}, Mel Spectrogram Loss : {:4.3f}, Mel Spectrogram L2 Loss : {:4.3f}, Commit Loss : {:4.3f}, s/b : {:4.3f}'.
+                        format(steps, L_G, A_error, IP_error, GD_error, PTD_error, C_error, R_error, I_error, Mel_error, Mel_L2_error, commit_loss, time.time() - start))
 
-            # checkpointing
-            if steps % h.checkpoint_interval == 0 and steps != 0:
-                checkpoint_path = "{}/encoder_{:08d}".format(h.checkpoint_path, steps)
-                save_checkpoint(checkpoint_path,
-                                {'encoder': encoder.state_dict()})
-                checkpoint_path = "{}/decoder_{:08d}".format(h.checkpoint_path, steps)
-                save_checkpoint(checkpoint_path,
-                                {'decoder': decoder.state_dict()})
-                checkpoint_path = "{}/do_{:08d}".format(h.checkpoint_path, steps)
-                save_checkpoint(checkpoint_path, 
-                                {'mpd': mpd.state_dict(),
-                                 'mrd': mrd.state_dict(),
-                                 'optim_g': optim_g.state_dict(), 'optim_d': optim_d.state_dict(), 'steps': steps,
-                                 'epoch': epoch})
+                # checkpointing
+                if steps % h.checkpoint_interval == 0 and steps != 0:
+                    checkpoint_path = "{}/encoder_{:08d}".format(h.checkpoint_path, steps)
+                    save_checkpoint(checkpoint_path,
+                                    {'encoder': encoder.state_dict()})
+                    checkpoint_path = "{}/decoder_{:08d}".format(h.checkpoint_path, steps)
+                    save_checkpoint(checkpoint_path,
+                                    {'decoder': decoder.state_dict()})
+                    checkpoint_path = "{}/do_{:08d}".format(h.checkpoint_path, steps)
+                    save_checkpoint(checkpoint_path, 
+                                    {'mpd': mpd.state_dict(),
+                                    'mrd': mrd.state_dict(),
+                                    'optim_g': optim_g.state_dict(), 'optim_d': optim_d.state_dict(), 'steps': steps,
+                                    'epoch': epoch})
 
-            # Tensorboard summary logging
-            if steps % h.summary_interval == 0:
-                sw.add_scalar("Training/Generator_Total_Loss", L_G, steps)
-                sw.add_scalar("Training/Mel_Spectrogram_Loss", Mel_error, steps)
+                # Tensorboard summary logging
+                if steps % h.summary_interval == 0:
+                    sw.add_scalar("Training/Generator_Total_Loss", L_G, steps)
+                    sw.add_scalar("Training/Mel_Spectrogram_Loss", Mel_error, steps)
 
-            # Validation
-            if steps % h.validation_interval == 0:  # and steps != 0:
-                encoder.eval()
-                decoder.eval()
-                torch.cuda.empty_cache()
-                val_A_err_tot = 0
-                val_IP_err_tot = 0
-                val_GD_err_tot = 0
-                val_PTD_err_tot = 0
-                val_C_err_tot = 0
-                val_R_err_tot = 0
-                val_I_err_tot = 0
-                val_Mel_err_tot = 0
-                val_Mel_L2_err_tot = 0
-                with torch.no_grad():
-                    for j, batch in enumerate(validation_loader):
-                        logamp, pha, rea, imag, y, y_mel = batch
-                        latent,_,_,_ = encoder(logamp.to(device), pha.to(device))
-                        logamp_g, pha_g, rea_g, imag_g, y_g = decoder(latent)
+                # Validation
+                if steps % h.validation_interval == 0:  # and steps != 0:
+                    encoder.eval()
+                    decoder.eval()
+                    torch.cuda.empty_cache()
+                    val_A_err_tot = 0
+                    val_IP_err_tot = 0
+                    val_GD_err_tot = 0
+                    val_PTD_err_tot = 0
+                    val_C_err_tot = 0
+                    val_R_err_tot = 0
+                    val_I_err_tot = 0
+                    val_Mel_err_tot = 0
+                    val_Mel_L2_err_tot = 0
+                    with torch.no_grad():
+                        for j, batch in enumerate(validation_loader):
+                            logamp, pha, rea, imag, y, y_mel = batch
+                            latent,_,_,_ = encoder(logamp.to(device), pha.to(device))
+                            logamp_g, pha_g, rea_g, imag_g, y_g = decoder(latent)
 
-                        logamp = torch.autograd.Variable(logamp.to(device, non_blocking=True))
-                        pha = torch.autograd.Variable(pha.to(device, non_blocking=True))
-                        rea = torch.autograd.Variable(rea.to(device, non_blocking=True))
-                        imag = torch.autograd.Variable(imag.to(device, non_blocking=True))
-                        y_mel = torch.autograd.Variable(y_mel.to(device, non_blocking=True))
-                        y_g_mel = mel_spectrogram(y_g.squeeze(1), h.n_fft, h.num_mels_for_loss, h.sampling_rate,h.hop_size, h.win_size, 0, None)
-                        
-                        _, _, rea_g_final, imag_g_final = amp_pha_specturm(y_g.squeeze(1), h.n_fft, h.hop_size, h.win_size)
-                        val_A_err_tot += amplitude_loss(logamp, logamp_g).item()
-                        val_IP_err, val_GD_err, val_PTD_err = phase_loss(pha, pha_g, h.n_fft, pha.size()[-1])
-                        val_IP_err_tot += val_IP_err.item()
-                        val_GD_err_tot += val_GD_err.item()
-                        val_PTD_err_tot += val_PTD_err.item()
-                        val_C_err_tot += STFT_consistency_loss(rea_g, rea_g_final, imag_g, imag_g_final).item()
-                        val_R_err_tot += F.l1_loss(rea, rea_g).item()
-                        val_I_err_tot += F.l1_loss(imag, imag_g).item()
-                        val_Mel_err_tot += F.l1_loss(y_mel, y_g_mel).item()
-                        val_Mel_L2_err_tot += amplitude_loss(y_mel, y_g_mel).item()
+                            logamp = torch.autograd.Variable(logamp.to(device, non_blocking=True))
+                            pha = torch.autograd.Variable(pha.to(device, non_blocking=True))
+                            rea = torch.autograd.Variable(rea.to(device, non_blocking=True))
+                            imag = torch.autograd.Variable(imag.to(device, non_blocking=True))
+                            y_mel = torch.autograd.Variable(y_mel.to(device, non_blocking=True))
+                            y_g_mel = mel_spectrogram(y_g.squeeze(1), h.n_fft, h.num_mels_for_loss, h.sampling_rate,h.hop_size, h.win_size, 0, None)
+                            
+                            _, _, rea_g_final, imag_g_final = amp_pha_specturm(y_g.squeeze(1), h.n_fft, h.hop_size, h.win_size)
+                            val_A_err_tot += amplitude_loss(logamp, logamp_g).item()
+                            val_IP_err, val_GD_err, val_PTD_err = phase_loss(pha, pha_g, h.n_fft, pha.size()[-1])
+                            val_IP_err_tot += val_IP_err.item()
+                            val_GD_err_tot += val_GD_err.item()
+                            val_PTD_err_tot += val_PTD_err.item()
+                            val_C_err_tot += STFT_consistency_loss(rea_g, rea_g_final, imag_g, imag_g_final).item()
+                            val_R_err_tot += F.l1_loss(rea, rea_g).item()
+                            val_I_err_tot += F.l1_loss(imag, imag_g).item()
+                            val_Mel_err_tot += F.l1_loss(y_mel, y_g_mel).item()
+                            val_Mel_L2_err_tot += amplitude_loss(y_mel, y_g_mel).item()
 
-                        if j <= 4:
-                            if steps == 0:
-                                sw.add_audio('gt/y_{}'.format(j), y[0], steps, h.sampling_rate)
-                                sw.add_figure('gt/y_logamp_{}'.format(j), plot_spectrogram(logamp[0].cpu().numpy()), steps)
-                                sw.add_figure('gt/y_pha_{}'.format(j), plot_spectrogram(pha[0].cpu().numpy()), steps)
+                            if j <= 4:
+                                if steps == 0:
+                                    sw.add_audio('gt/y_{}'.format(j), y[0], steps, h.sampling_rate)
+                                    sw.add_figure('gt/y_logamp_{}'.format(j), plot_spectrogram(logamp[0].cpu().numpy()), steps)
+                                    sw.add_figure('gt/y_pha_{}'.format(j), plot_spectrogram(pha[0].cpu().numpy()), steps)
 
-                            sw.add_audio('generated/y_g_{}'.format(j), y_g[0], steps, h.sampling_rate)
-                            sw.add_figure('generated/y_g_logamp_{}'.format(j), plot_spectrogram(logamp_g[0].cpu().numpy()), steps)
-                            sw.add_figure('generated/y_g_pha_{}'.format(j), plot_spectrogram(pha_g[0].cpu().numpy()), steps)
+                                sw.add_audio('generated/y_g_{}'.format(j), y_g[0], steps, h.sampling_rate)
+                                sw.add_figure('generated/y_g_logamp_{}'.format(j), plot_spectrogram(logamp_g[0].cpu().numpy()), steps)
+                                sw.add_figure('generated/y_g_pha_{}'.format(j), plot_spectrogram(pha_g[0].cpu().numpy()), steps)
 
-                    val_A_err = val_A_err_tot / (j+1)
-                    val_IP_err = val_IP_err_tot / (j+1)
-                    val_GD_err = val_GD_err_tot / (j+1)
-                    val_PTD_err = val_PTD_err_tot / (j+1)
-                    val_C_err = val_C_err_tot / (j+1)
-                    val_R_err = val_R_err_tot / (j+1)
-                    val_I_err = val_I_err_tot / (j+1)
-                    val_Mel_err = val_Mel_err_tot / (j+1)
-                    val_Mel_L2_err = val_Mel_L2_err_tot / (j+1)
-                    sw.add_scalar("Validation/Amplitude_Loss", val_A_err, steps)
-                    sw.add_scalar("Validation/Instantaneous_Phase_Loss", val_IP_err, steps)
-                    sw.add_scalar("Validation/Group_Delay_Loss", val_GD_err, steps)
-                    sw.add_scalar("Validation/Phase_Time_Difference_Loss", val_PTD_err, steps)
-                    sw.add_scalar("Validation/STFT_Consistency_Loss", val_C_err, steps)
-                    sw.add_scalar("Validation/Real_Part_Loss", val_R_err, steps)
-                    sw.add_scalar("Validation/Imaginary_Part_Loss", val_I_err, steps)
-                    sw.add_scalar("Validation/Mel_Spectrogram_loss", val_Mel_err, steps)
-                    sw.add_scalar("Validation/Mel_Spectrogram_L2_loss", val_Mel_L2_err, steps)
+                        val_A_err = val_A_err_tot / (j+1)
+                        val_IP_err = val_IP_err_tot / (j+1)
+                        val_GD_err = val_GD_err_tot / (j+1)
+                        val_PTD_err = val_PTD_err_tot / (j+1)
+                        val_C_err = val_C_err_tot / (j+1)
+                        val_R_err = val_R_err_tot / (j+1)
+                        val_I_err = val_I_err_tot / (j+1)
+                        val_Mel_err = val_Mel_err_tot / (j+1)
+                        val_Mel_L2_err = val_Mel_L2_err_tot / (j+1)
+                        sw.add_scalar("Validation/Amplitude_Loss", val_A_err, steps)
+                        sw.add_scalar("Validation/Instantaneous_Phase_Loss", val_IP_err, steps)
+                        sw.add_scalar("Validation/Group_Delay_Loss", val_GD_err, steps)
+                        sw.add_scalar("Validation/Phase_Time_Difference_Loss", val_PTD_err, steps)
+                        sw.add_scalar("Validation/STFT_Consistency_Loss", val_C_err, steps)
+                        sw.add_scalar("Validation/Real_Part_Loss", val_R_err, steps)
+                        sw.add_scalar("Validation/Imaginary_Part_Loss", val_I_err, steps)
+                        sw.add_scalar("Validation/Mel_Spectrogram_loss", val_Mel_err, steps)
+                        sw.add_scalar("Validation/Mel_Spectrogram_L2_loss", val_Mel_L2_err, steps)
 
-                encoder.train()
-                decoder.train()
+                    encoder.train()
+                    decoder.train()
 
             steps += 1
 
         scheduler_g.step()
         scheduler_d.step()
         
-        print('Time taken for epoch {} is {} sec\n'.format(epoch + 1, int(time.time() - start)))
+        if rank == 0:
+            print('Time taken for epoch {} is {} sec\n'.format(epoch + 1, int(time.time() - start)))
 
 
 def main():
@@ -291,6 +311,9 @@ def main():
 
     json_config = json.loads(data)
     h = AttrDict(json_config)
+
+    if not os.path.exists(h.checkpoint_path):
+         os.makedirs(h.checkpoint_path, exist_ok=True)
     build_env(config_file, 'config.json', h.checkpoint_path)
 
     torch.manual_seed(h.seed)
@@ -299,7 +322,16 @@ def main():
     else:
         pass
 
-    train(h)
+    n_gpus = torch.cuda.device_count()
+    if n_gpus > 1:
+        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_PORT'] = '12345' 
+
+        print(f"Training with {n_gpus} GPUs.")
+        mp.spawn(train, nprocs=n_gpus, args=(n_gpus, h,))
+    else:
+        print("Training on a single GPU.")
+        train(0, 1, h)
 
 
 if __name__ == '__main__':

@@ -42,7 +42,7 @@ def mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin,
 
     spec = torch.stft(y, n_fft, hop_length=hop_size, win_length=win_size, window=hann_window, center=True, return_complex=True)
     spec = torch.view_as_real(spec)  # 将复数张量转为 [..., 2] 格式（实部和虚部）
-    spec = torch.sqrt(spec.pow(2).sum(-1) + (1e-9))
+    spec = torch.sqrt(spec.pow(2).sum(-1) + (1e-6))
     spec = torch.matmul(mel_basis, spec)
     spec = spectral_normalize_torch(spec)
 
@@ -55,8 +55,8 @@ def amp_pha_specturm(y, n_fft, hop_size, win_size):
     stft_spec = torch.view_as_real(stft_spec)  # [batch_size, n_fft//2+1, frames, 2]
     rea = stft_spec[:, :, :, 0]  # [batch_size, n_fft//2+1, frames]
     imag = stft_spec[:, :, :, 1]  # [batch_size, n_fft//2+1, frames]
-    log_amplitude = torch.log(torch.abs(torch.sqrt(torch.pow(rea, 2) + torch.pow(imag, 2))) + 1e-5)
-    phase = torch.atan2(imag, rea)
+    log_amplitude = torch.log(torch.abs(torch.sqrt(torch.pow(rea, 2) + torch.pow(imag, 2)+1e-6)) + 1e-5)
+    phase = torch.atan2(imag, rea + 1e-6 * (rea == 0).float())
     return log_amplitude, phase, rea, imag
 
 def get_dataset_filelist(input_training_wav_list, input_validation_wav_list):

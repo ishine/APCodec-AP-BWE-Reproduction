@@ -5,7 +5,7 @@ import os
 import pandas as pd
 
 # 输入输出路径
-input_dir = "/mnt/nvme_share/srt30/checkpoint/exp_vb/output_2_wav_620k"
+input_dir = "/mnt/nvme_share/srt30/checkpoint/exp_16k/output_wav_100k"
 output_csv = "/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_16k/file.csv"
 
 # 加载 SpeechMOS 模型

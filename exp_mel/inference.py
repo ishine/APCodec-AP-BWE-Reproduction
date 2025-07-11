@@ -6,15 +6,23 @@ import argparse
 import json
 import torch
 from exp_mel.utils import AttrDict
-from exp_mel.dataset import amp_pha_specturm, load_wav
+from exp_mel.dataset import mel_spectrogram, load_wav
 from exp_mel.models import Encoder, Decoder
 import soundfile as sf
 import librosa
 import numpy as np
 import torchaudio.functional as F_audio
+import time  
+import logging  
+import math
 
 h = None
 device = None
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]  # 同时输出到终端
+)
 
 
 def load_checkpoint(filepath, device):
@@ -48,34 +56,44 @@ def inference(h):
     encoder.eval()
     decoder.eval()
 
+    codebook_size = 1024
+
+    total_duration = 0.0  # 总音频时长
+    total_bits = 0  # 总比特数
+
     with torch.no_grad():
+        start_time = time.time()
         for i, filename in enumerate(filelist):
 
-            raw_wav, _ = librosa.load(os.path.join(h.test_input_wavs_dir, filename), sr=h.sampling_rate, mono=True)
-            raw_wav = torch.FloatTensor(raw_wav).to(device)
-            raw_wav_lr = F_audio.resample(raw_wav.unsqueeze(0), orig_freq=48000, new_freq=8000)
-            raw_wav_lr = F_audio.resample(raw_wav_lr, orig_freq=8000, new_freq=48000)
+            raw_wav, sr = librosa.load(os.path.join(h.test_input_wavs_dir, filename), sr=h.sampling_rate, mono=True)
+            duration = len(raw_wav) / sr
+            total_duration += duration
 
-            logamp, pha, _, _ = amp_pha_specturm(raw_wav_lr, h.n_fft, h.hop_size, h.win_size)
-            
-            latent,_,_ = encoder(logamp, pha)
-            logamp_g, pha_g, _, _, y_g = decoder(latent)
-            latent = latent.squeeze()
+            raw_wav = torch.FloatTensor(raw_wav).to(device)
+            y_mel = mel_spectrogram(raw_wav.unsqueeze(0), h.n_fft, h.num_mels_for_loss ,h.sampling_rate, h.hop_size, h.win_size, 0, None,)
+            latent, codes, _, _ = encoder(y_mel)
+
+            n_codebooks = codes.shape[1]  # 码本数量
+            T = codes.shape[2]  # 时间步数
+            bits_per_index = math.ceil(math.log2(codebook_size))  # 每个索引的比特数
+            bits_per_frame = n_codebooks * bits_per_index
+            file_bits = bits_per_frame * T
+            total_bits += file_bits
+            y_g = decoder(latent)
             audio = y_g.squeeze()
-            logamp = logamp_g.squeeze()
-            pha = pha_g.squeeze()
-            latent = latent.cpu().numpy()
             audio = audio.cpu().numpy()
-            logamp = logamp.cpu().numpy()
-            pha = pha.cpu().numpy()
 
             sf.write(os.path.join(h.test_wav_output_dir, filename.split('.')[0]+'.wav'), audio, h.sampling_rate,'PCM_16')
+        total_inference_time = time.time() - start_time
+    bitrate_kbps = (total_bits / total_duration) / 1000
+    logging.info(f"Total inference time: {total_inference_time:.2f} seconds")
+    logging.info(f"Total duration: {total_duration:.3f} seconds, Total bits: {total_bits}, Bitrate: {bitrate_kbps:.3f} kbps")
 
 
 def main():
     print('Initializing Inference Process..')
 
-    config_file = '/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_0/config.json'
+    config_file = '/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_mel/config.json'
 
     with open(config_file) as f:
         data = f.read()

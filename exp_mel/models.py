@@ -18,7 +18,7 @@ class GRN(nn.Module):
         self.beta = nn.Parameter(torch.zeros(1, 1, dim))
 
     def forward(self, x):
-        Gx = torch.norm(x, p=2, dim=1, keepdim=True)
+        Gx = torch.sqrt(torch.sum(x**2, dim=1, keepdim=True) + 1e-6)
         Nx = Gx / (Gx.mean(dim=-1, keepdim=True) + 1e-6)
         return self.gamma * (x * Nx) + self.beta + x
 
@@ -50,6 +50,7 @@ class ConvNeXtBlock(nn.Module):
         self.act = nn.GELU()
         self.grn = GRN(intermediate_dim)
         self.pwconv2 = nn.Linear(intermediate_dim, dim)
+        self.dropout = nn.Dropout(0.1)
 
     def forward(self, x, cond_embedding_id = None) :
         residual = x
@@ -64,6 +65,7 @@ class ConvNeXtBlock(nn.Module):
         x = self.act(x)
         x = self.grn(x)
         x = self.pwconv2(x)
+        x = self.dropout(x)
         
         x = x.transpose(1, 2)  # (B, T, C) -> (B, C, T)
 
@@ -178,8 +180,8 @@ class Decoder(torch.nn.Module):
 
         self.out_mel = torch.nn.Linear(self.dim, h.latent_dim)
 
-        self.mel_Decoder_output_conv = weight_norm(Conv1d(h.latent_dim, 1, h.mel_Decoder_output_conv_kernel_size, 1, 
-                                                  padding=get_padding(h.mel_Decoder_output_conv_kernel_size, 1)))
+        self.mel_Decoder_output_conv = weight_norm(Conv1d(h.latent_dim, 1, h.mel_Decoder_output_conv_kernel_size, 1, padding=get_padding(h.mel_Decoder_output_conv_kernel_size, 1)))
+        self.dropout = nn.Dropout(0.1)
         self.mel_Decoder_output_conv.apply(init_weights)
         self.output_activation = nn.Tanh()  
 
@@ -190,16 +192,17 @@ class Decoder(torch.nn.Module):
 
     def forward(self, latent):
         #input: [B, 32, T']
-        latent = self.latent_input_conv(latent) #[B,128,T']
-        mel = self.mel_Decoder_upsample1_input_conv(latent) #[B,256,T]
-        mel = self.mel_Decoder_upsample2_input_conv(mel) #[B,256,t]
+        latent = F.leaky_relu(self.latent_input_conv(latent), 0.1) #[B,128,T']
+        mel = F.leaky_relu(self.mel_Decoder_upsample1_input_conv(latent), 0.1) #[B,256,T]
+        mel = F.leaky_relu(self.mel_Decoder_upsample2_input_conv(mel), 0.1) #[B,256,t]
         mel = self.embed_mel(mel) #[B,256,t]
         mel = self.norm_mel(mel.transpose(1, 2)) #[B,t,256]
         mel = mel.transpose(1, 2) #[B,256,t]
         for conv_block in self.convnext_mel:
             mel = conv_block(mel, cond_embedding_id=None)
         mel = self.final_layer_norm_mel(mel.transpose(1, 2)) #[B,256,t]
-        mel = self.out_mel(mel).transpose(1, 2) #[B,32,t]
+        mel = F.leaky_relu(self.out_mel(mel), 0.1).transpose(1, 2) #[B,32,t]
+        mel = self.dropout(mel)
         audio = self.mel_Decoder_output_conv(mel) #[B,1,t]
         audio = self.output_activation(audio)
 
@@ -442,6 +445,7 @@ def phase_loss(phase_r, phase_g, n_fft, frames):
 
 
     return IP_loss, GD_loss, PTD_loss
+
 
 def anti_wrapping_function(x):
 

@@ -123,8 +123,8 @@ def main(h):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--reference_wav_dir', default='/mnt/nvme_share/srt30/AP-BWE-main/VCTK-Corpus-0.92/wav48/test')
-    parser.add_argument('--synthesis_wav_dir', default='/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_0/output_wav_580k')
+    parser.add_argument('--reference_wav_dir', default='/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav48/origin/test')
+    parser.add_argument('--synthesis_wav_dir', default='/mnt/nvme_share/srt30/checkpoint/exp_mel/output_wav_165k')
 
     h = parser.parse_args()
 

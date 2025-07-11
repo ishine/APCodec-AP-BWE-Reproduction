@@ -144,7 +144,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--reference_wav_dir', default='/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav48/origin/test')
-    parser.add_argument('--synthesis_wav_dir', default='/mnt/nvme_share/srt30/checkpoint/exp_fsq/output_wav_115k')
+    parser.add_argument('--synthesis_wav_dir', default='/mnt/nvme_share/srt30/checkpoint/exp_fsq/output_wav_1350k')
 
     h = parser.parse_args()
 
