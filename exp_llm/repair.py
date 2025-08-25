@@ -28,12 +28,12 @@ def load_checkpoint(filepath, device):
 
 MODEL_PATH = "/mnt/nvme_share/common/LLMs/gemma-2b-it"
 ADAPTER_PATH = "/mnt/nvme_share/srt30/checkpoint/exp_new_llm/checkpoint-310000"
-TEST_DATA_PATH = "/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_llm/test.json"
+TEST_DATA_PATH = "/mnt/nvme_share/srt30/APCodec-Reproduction/exp_llm/test.json"
 OUTPUT_DIR = "/mnt/nvme_share/srt30/checkpoint/exp_llm"
 PREDICTIONS_PATH = os.path.join(OUTPUT_DIR, "predictions_80k.json")
 INSTRUCTION_PROMPT = "Repair the following token sequence:"
 
-config_file = "/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_fsq/config.json"
+config_file = "/mnt/nvme_share/srt30/APCodec-Reproduction/exp_fsq/config.json"
 with open(config_file, 'r') as f:
     json_config = json.load(f)
 h = AttrDict(json_config)

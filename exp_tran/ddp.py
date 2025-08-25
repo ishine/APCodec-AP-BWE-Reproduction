@@ -12,10 +12,10 @@ from torch.utils.data import DistributedSampler, DataLoader
 import torch.multiprocessing as mp
 from torch.distributed import init_process_group, destroy_process_group
 from torch.nn.parallel import DistributedDataParallel
-from exp_tasr.dataset import Dataset, mel_spectrogram, amp_pha_specturm, get_dataset_filelist
-from exp_tasr.models import Encoder, Decoder, MultiPeriodDiscriminator, MultiScaleDiscriminator, feature_loss, generator_loss,\
+from exp_tran.dataset import Dataset, mel_spectrogram, amp_pha_specturm, get_dataset_filelist
+from exp_tran.models import Encoder, Decoder, MultiPeriodDiscriminator, MultiScaleDiscriminator, feature_loss, generator_loss,\
     discriminator_loss, amplitude_loss, phase_loss, STFT_consistency_loss, MultiResolutionDiscriminator
-from exp_tasr.utils import AttrDict, build_env, plot_spectrogram, scan_checkpoint, load_checkpoint, save_checkpoint
+from exp_tran.utils import AttrDict, build_env, plot_spectrogram, scan_checkpoint, load_checkpoint, save_checkpoint
 
 mp.set_start_method('spawn', force=True)
 

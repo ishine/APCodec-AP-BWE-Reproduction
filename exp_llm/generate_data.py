@@ -72,7 +72,7 @@ def generate_data(h):
 def main():
     print('Initializing Generate Data Process..')
 
-    config_file = '/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_llm/config.json'
+    config_file = '/mnt/nvme_share/srt30/APCodec-Reproduction/exp_llm/config.json'
     with open(config_file) as f:
         data = f.read()
 

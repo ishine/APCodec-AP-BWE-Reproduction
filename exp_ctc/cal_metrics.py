@@ -85,7 +85,7 @@ def main(h):
 
     wav_indexes = os.listdir(h.reference_wav_dir)
     
-    predicted_label_dir = "/mnt/nvme_share/srt30/checkpoint/exp_asr/output_label_610k/predicted_labels.json"
+    predicted_label_dir = "/mnt/nvme_share/srt30/checkpoint/exp_ctc/output_label_765k/predicted_labels.json"
     truth_label_dir = "/mnt/nvme_share/srt30/Datasets/VCTK-0.92/txt/test_labels.json"
 
     with open(predicted_label_dir, 'r', encoding='utf-8') as f:
@@ -145,7 +145,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--reference_wav_dir', default='/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav48/origin/test')
-    parser.add_argument('--synthesis_wav_dir', default='/mnt/nvme_share/srt30/checkpoint/exp_asr/output_wav_610k')
+    parser.add_argument('--synthesis_wav_dir', default='/mnt/nvme_share/srt30/checkpoint/exp_ctc/output_wav_765k')
 
     h = parser.parse_args()
 

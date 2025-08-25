@@ -3,9 +3,9 @@ import torch.nn.functional as F
 import torch.nn as nn
 from torch.nn import Conv1d, ConvTranspose1d, AvgPool1d, Conv2d
 from torch.nn.utils import weight_norm, spectral_norm
-from exp_asr.utils import init_weights, get_padding
+from exp_ctc.utils import init_weights, get_padding
 import numpy as np
-from exp_asr.quantize import ResidualFSQ
+from exp_ctc.quantize import ResidualFSQ
 import torchaudio.functional as F_audio
 import torchaudio
 

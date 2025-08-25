@@ -78,7 +78,7 @@ def inference(h):
             raw_wav = torch.FloatTensor(raw_wav).to(device)
             logamp, pha, _, _ = amp_pha_specturm(raw_wav.unsqueeze(0), h.n_fft, h.hop_size, h.win_size)
             
-            latent,codes,_,_ = encoder(logamp, pha,n_quantizers=4)
+            latent,codes,_,_ = encoder(logamp, pha,n_quantizers=4)#选择量化器数量
             logamp_g, pha_g, _, _, y_g = decoder(latent)
             n_codebooks = codes.shape[1]  # 码本数量
             T = codes.shape[2]  # 时间步数
@@ -104,7 +104,7 @@ def inference(h):
 def main():
     print('Initializing Inference Process..')
 
-    config_file = '/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_vb/config.json'
+    config_file = '/mnt/nvme_share/srt30/APCodec-Reproduction/exp_vb/config.json'
 
     with open(config_file) as f:
         data = f.read()

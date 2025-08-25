@@ -40,7 +40,7 @@ def generate_data(h):
     encoder.eval()
 
     filename = "/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav48/origin/test/p360_003.wav"
-    output_dir = "/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_llm/test.json"
+    output_dir = "/mnt/nvme_share/srt30/APCodec-Reproduction/exp_llm/test.json"
     dataset = []
 
     with torch.no_grad():
@@ -74,7 +74,7 @@ def generate_data(h):
 def main():
     print('Initializing Generate Data Process..')
 
-    config_file = '/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_llm/config.json'
+    config_file = '/mnt/nvme_share/srt30/APCodec-Reproduction/exp_llm/config.json'
     with open(config_file) as f:
         data = f.read()
 

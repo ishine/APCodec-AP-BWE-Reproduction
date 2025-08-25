@@ -2,7 +2,7 @@
     "test_input_wavs_dir":"/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav48/origin/test",
     "test_wav_output_dir":"/mnt/nvme_share/srt30/checkpoint/exp_new_llm/output_wav_550k",
     "input_wavs_dir":"/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav48/origin/train",
-    "output_file":"/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_llm/train_data.json",
+    "output_file":"/mnt/nvme_share/srt30/APCodec-Reproduction/exp_llm/train_data.json",
     "drop_prob":0.1,
     "batch_size": 96,
     "learning_rate": 0.0002,

@@ -8,7 +8,7 @@ import json
 
 MODEL_PATH = "/mnt/nvme_share/common/LLMs/gemma-2b-it"
 ADAPTER_PATH = "/mnt/nvme_share/srt30/checkpoint/exp_new_llm/checkpoint-80000"
-TEST_DATA_PATH = "/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_llm/test_data.json"
+TEST_DATA_PATH = "/mnt/nvme_share/srt30/APCodec-Reproduction/exp_llm/test_data.json"
 OUTPUT_DIR = "/mnt/nvme_share/srt30/checkpoint/exp_llm"
 PREDICTIONS_PATH = os.path.join(OUTPUT_DIR, "predictions_49k.json")
 INSTRUCTION_PROMPT = "Repair the following token sequence:"

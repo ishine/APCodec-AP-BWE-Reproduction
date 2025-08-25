@@ -271,7 +271,7 @@ def train(h):
 def main():
     print('Initializing Training Process..')
 
-    config_file = '/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_0denoise/config.json'
+    config_file = '/mnt/nvme_share/srt30/APCodec-Reproduction/exp_denoise/config.json'
 
     with open(config_file) as f:
         data = f.read()

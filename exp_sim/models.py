@@ -5,7 +5,7 @@ from torch.nn import Conv1d, ConvTranspose1d, AvgPool1d, Conv2d
 from torch.nn.utils import weight_norm, spectral_norm
 from exp_sim.utils import init_weights, get_padding
 import numpy as np
-from exp_sim.quantize_RSIM import ResidualSimVQ
+from exp_sim.quantize import ResidualSimVQ
 
 LRELU_SLOPE = 0.1
 

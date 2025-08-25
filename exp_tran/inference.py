@@ -4,9 +4,9 @@ import glob
 import os
 import json
 import torch
-from exp_tasr.utils import AttrDict
-from exp_tasr.dataset import amp_pha_specturm
-from exp_tasr.models import Encoder, Decoder
+from exp_tran.utils import AttrDict
+from exp_tran.dataset import amp_pha_specturm
+from exp_tran.models import Encoder, Decoder
 import soundfile as sf
 import librosa
 import numpy as np
@@ -86,7 +86,7 @@ def inference(h):
 
 def main():
     print('Initializing Inference Process..')
-    config_file = '/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_tasr/config.json'
+    config_file = '/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_tran/config.json'
     with open(config_file) as f:
         data = f.read()
     global h

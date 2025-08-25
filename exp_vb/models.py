@@ -130,7 +130,7 @@ class Encoder(torch.nn.Module):
         self.quantizer = ResidualFSQ(
             input_dim=h.latent_dim,
             codebook_dim=h.latent_dim,
-            n_quantizers=4,
+            n_quantizers=8,
             codebook_size=1024,
             quantizer_dropout=0.6
         )

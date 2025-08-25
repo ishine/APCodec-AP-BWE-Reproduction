@@ -12,7 +12,7 @@ from accelerate import Accelerator
 import os
 
 MODEL_PATH = "/mnt/nvme_share/common/LLMs/gemma-2b-it"
-DATASET_PATH = "/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_llm/train_data.json"
+DATASET_PATH = "/mnt/nvme_share/srt30/APCodec-Reproduction/exp_llm/train_data.json"
 OUTPUT_DIR = "/mnt/nvme_share/srt30/checkpoint/exp_new_llm" 
 
 INSTRUCTION_PROMPT = "Repair the following token sequence:"

@@ -126,7 +126,7 @@ def main():
     model_path = "/mnt/nvme_share/common/LLMs/gemma-2b-it"
     adapter_path = "/mnt/nvme_share/srt30/checkpoint/exp_new_llm/checkpoint-550000"
     instruction_prompt = "Repair the following token sequence:"
-    config_file = '/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_llm/config.json'
+    config_file = '/mnt/nvme_share/srt30/APCodec-Reproduction/exp_llm/config.json'
     with open(config_file, 'r') as f:
         json_config = json.load(f)
     h = AttrDict(json_config)
