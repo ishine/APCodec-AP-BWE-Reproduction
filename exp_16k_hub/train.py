@@ -187,6 +187,7 @@ def train(rank, world_size, h):
                 # 再次确认 input_y 和 input_y_g 的形状
                 feature_y = hubert(input_y, output_hidden_states=True).hidden_states[9]
                 feature_y_g = hubert(input_y_g, output_hidden_states=True).hidden_states[9]
+                print(f"feature_y的形状：{feature_y.shape}")
             
             semantic_loss = t_axis_distill_loss(feature_y, feature_y_g)
 

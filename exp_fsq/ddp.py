@@ -129,8 +129,11 @@ def train(rank, world_size, h):
             y_mel = torch.autograd.Variable(y_mel.to(device, non_blocking=True))
             y = y.unsqueeze(1)
 
+            print(f"logamp的形状{logamp.shape}")
+            print(f"y_mel的形状{y_mel.shape}")
             latent,codes,commitment_loss,codebook_loss = encoder(logamp, pha)
             logamp_g, pha_g, rea_g, imag_g, y_g = decoder(latent)
+            print(f"latent的形状{latent.shape}")
             y_g_mel = mel_spectrogram(y_g.squeeze(1), h.n_fft, h.num_mels, h.sampling_rate, h.hop_size, h.win_size,
                                       0, None)
 

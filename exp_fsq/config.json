@@ -4,7 +4,7 @@
     "test_input_wavs_dir":"/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav48/origin/test",
     "test_wav_output_dir":"/mnt/nvme_share/srt30/checkpoint/exp_fsq/output_wav_1350k",
 
-    "batch_size": 96,
+    "batch_size": 32,
     "learning_rate": 0.0002,
     "adam_b1": 0.8,
     "adam_b2": 0.99,

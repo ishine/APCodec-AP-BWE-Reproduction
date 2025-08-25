@@ -2,9 +2,9 @@
     "input_training_wav_list": "/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav48/origin/waveform_48k_train.scp",
     "input_validation_wav_list": "/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav48/origin/waveform_48k_valid.scp",
     "test_input_wavs_dir":"/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav48/origin/test",
-    "test_wav_output_dir":"/mnt/nvme_share/srt30/checkpoint/exp_mel/output_wav_165k",
+    "test_wav_output_dir":"/mnt/nvme_share/srt30/checkpoint/exp_mel/output_wav_2280k",
 
-    "batch_size": 48,
+    "batch_size": 32,
     "learning_rate": 0.0002,
     "adam_b1": 0.8,
     "adam_b2": 0.99,
@@ -16,8 +16,8 @@
     "summary_interval": 100,
     "validation_interval": 5000,
     "checkpoint_path": "/mnt/nvme_share/srt30/checkpoint/exp_mel/cp_Encoder_Decoder",
-    "checkpoint_file_load_Encoder": "/mnt/nvme_share/srt30/checkpoint/exp_mel/cp_Encoder_Decoder/encoder_00165000",
-    "checkpoint_file_load_Decoder": "/mnt/nvme_share/srt30/checkpoint/exp_mel/cp_Encoder_Decoder/decoder_00165000",
+    "checkpoint_file_load_Encoder": "/mnt/nvme_share/srt30/checkpoint/exp_mel/cp_Encoder_Decoder/encoder_02280000",
+    "checkpoint_file_load_Decoder": "/mnt/nvme_share/srt30/checkpoint/exp_mel/cp_Encoder_Decoder/decoder_02280000",
 
     "mel_Encoder_channel": 256,
     "mel_Encoder_resblock_kernel_sizes": [3,7,11],
