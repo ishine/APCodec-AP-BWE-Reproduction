@@ -93,7 +93,7 @@ def inference(h):
 def main():
     print('Initializing Inference Process..')
 
-    config_file = '/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_mel/config.json'
+    config_file = '/mnt/nvme_share/srt30/APCodec-Reproduction/exp_mel/config.json'
 
     with open(config_file) as f:
         data = f.read()

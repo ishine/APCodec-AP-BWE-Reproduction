@@ -299,7 +299,7 @@ def train(rank, world_size, h):
 def main():
     print('Initializing Training Process..')
 
-    config_file = '/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_vb/config.json'
+    config_file = '/mnt/nvme_share/srt30/APCodec-Reproduction/exp_vb/config.json'
 
     with open(config_file) as f:
         data = f.read()
