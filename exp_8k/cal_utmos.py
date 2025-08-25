@@ -6,7 +6,7 @@ import pandas as pd
 
 # 输入输出路径
 input_dir = "/mnt/nvme_share/srt30/checkpoint/exp_8k/output_wav_860k"
-output_csv = "/mnt/nvme_share/srt30/APCodec-AP-BWE-Reproduction/exp_8k/file.csv"
+output_csv = "/mnt/nvme_share/srt30/APCodec-Reproduction/exp_8k/file.csv"
 
 # 加载 SpeechMOS 模型
 predictor = torch.hub.load("tarepan/SpeechMOS:v1.2.0", "utmos22_strong", trust_repo=True)
