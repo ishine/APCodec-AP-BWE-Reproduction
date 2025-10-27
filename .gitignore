@@ -1,4 +1,2 @@
-exp_rasr/
-exp_id/
-exp_new/
-exp_llm/
+echo "__pycache__/" >> .gitignore
+echo "*.pyc" >> .gitignore
