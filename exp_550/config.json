@@ -1,0 +1,64 @@
+{
+    "input_training_wav_list": "/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav8/origin/waveform_8k_train.scp",
+    "input_validation_wav_list": "/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav8/origin/waveform_8k_valid.scp",
+    "test_input_wavs_dir":"/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav8/origin/test",
+    "test_wav_output_dir":"/mnt/nvme_share/srt30/checkpoint/exp_550/output_wav_480k",
+
+    "batch_size": 48,
+    "learning_rate": 0.0002,
+    "adam_b1": 0.8,
+    "adam_b2": 0.99,
+    "lr_decay": 0.999,
+    "seed": 1234,
+    "training_epochs": 3100,
+    "stdout_interval":100,
+    "checkpoint_interval": 10000,
+    "summary_interval": 100,
+    "validation_interval": 5000,
+    "checkpoint_path": "/mnt/nvme_share/srt30/checkpoint/exp_550/cp_Encoder_Decoder",
+    "checkpoint_file_load_Encoder": "/mnt/nvme_share/srt30/checkpoint/exp_550/cp_Encoder_Decoder/encoder_00480000",
+    "checkpoint_file_load_Decoder": "/mnt/nvme_share/srt30/checkpoint/exp_550/cp_Encoder_Decoder/decoder_00480000",
+
+    "AMP_Encoder_channel": 256,
+    "AMP_Encoder_resblock_kernel_sizes": [3,7,11],
+    "AMP_Encoder_resblock_dilation_sizes": [[1,3,5], [1,3,5], [1,3,5]],
+    "AMP_Encoder_input_conv_kernel_size": 7,
+    "AMP_Encoder_output_downconv_kernel_size": 7,
+
+    "PHA_Encoder_channel": 256,
+    "PHA_Encoder_resblock_kernel_sizes": [3,7,11],
+    "PHA_Encoder_resblock_dilation_sizes": [[1,3,5], [1,3,5], [1,3,5]],
+    "PHA_Encoder_input_conv_kernel_size": 7,
+    "PHA_Encoder_output_downconv_kernel_size": 7,
+
+    "AMP_Decoder_channel": 256,
+    "AMP_Decoder_resblock_kernel_sizes": [3,7,11],
+    "AMP_Decoder_resblock_dilation_sizes": [[1,3,5], [1,3,5], [1,3,5]],
+    "AMP_Decoder_input_upconv_kernel_size": 16,
+    "AMP_Decoder_output_conv_kernel_size": 7,
+
+    "PHA_Decoder_channel": 256,
+    "PHA_Decoder_resblock_kernel_sizes": [3,7,11],
+    "PHA_Decoder_resblock_dilation_sizes": [[1,3,5], [1,3,5], [1,3,5]],
+    "PHA_Decoder_input_upconv_kernel_size": 16,
+    "PHA_Decoder_output_R_conv_kernel_size": 7,
+    "PHA_Decoder_output_I_conv_kernel_size": 7,
+
+    "latent_output_conv_kernel_size": 7,
+    "latent_input_conv_kernel_size": 7,
+
+    "ratio": 8,
+    "latent_dim": 32,
+
+
+    "segment_size": 7960,
+    "num_mels": 80,
+    "n_fft": 1024,
+    "hop_size": 40,
+    "win_size": 320,
+    "num_mels_for_loss": 80,
+
+    "sampling_rate": 8000,
+
+    "num_workers": 8
+}
