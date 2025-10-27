@@ -1,9 +1,9 @@
 {
-    "input_training_wav_list": "/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav48/filtered/waveform_filtered_train.scp",
-    "input_validation_wav_list": "/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav48/filtered/waveform_filtered_valid.scp",
+    "input_training_wav_list": "/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav48/filtered_6/waveform_48k_filtered_6_train.scp",
+    "input_validation_wav_list": "/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav48/filtered_6/waveform_48k_filtered_6_valid.scp",
     "test_input_wavs_dir":"/mnt/nvme_share/srt30/Datasets/VCTK-0.92/wav48/origin/test",
-    "test_wav_output_dir":"/mnt/nvme_share/srt30/checkpoint/exp_ctc/output_wav_765k",
-    "test_label_output_dir":"/mnt/nvme_share/srt30/checkpoint/exp_ctc/output_label_765k",
+    "test_wav_output_dir":"/mnt/nvme_share/srt30/checkpoint/exp_ctc/output_wav_800k",
+    "test_label_output_dir":"/mnt/nvme_share/srt30/checkpoint/exp_ctc/output_label_800k",
     "label_path": "/mnt/nvme_share/srt30/Datasets/VCTK-0.92/txt/train_labels.json",
 
     "batch_size": 4,
@@ -18,8 +18,8 @@
     "summary_interval": 100,
     "validation_interval": 5000,
     "checkpoint_path": "/mnt/nvme_share/srt30/checkpoint/exp_ctc/cp_Encoder_Decoder",
-    "checkpoint_file_load_Encoder": "/mnt/nvme_share/srt30/checkpoint/exp_ctc/cp_Encoder_Decoder/encoder_00765000",
-    "checkpoint_file_load_Decoder": "/mnt/nvme_share/srt30/checkpoint/exp_ctc/cp_Encoder_Decoder/decoder_00765000",
+    "checkpoint_file_load_Encoder": "/mnt/nvme_share/srt30/checkpoint/exp_ctc/cp_Encoder_Decoder/encoder_00810000",
+    "checkpoint_file_load_Decoder": "/mnt/nvme_share/srt30/checkpoint/exp_ctc/cp_Encoder_Decoder/decoder_00810000",
 
     "AMP_Encoder_channel": 256,
     "AMP_Encoder_resblock_kernel_sizes": [3,7,11],
