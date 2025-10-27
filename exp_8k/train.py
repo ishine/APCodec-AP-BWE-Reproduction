@@ -159,7 +159,7 @@ def train(h):
             # Losses defined on final waveforms
             L_W = L_GAN_G + L_FM + 45 * L_Mel + 45 * L_Mel_L2 
 
-            L_G = 45 * L_A + 100 * L_P + 20 * L_S + L_W + codebook_loss*10 +commitment_loss*2.5
+            L_G = 45 * L_A + 100 * L_P + 20 * L_S + L_W + codebook_loss*10 + commitment_loss*2.5
 
             L_G.backward()
             optim_g.step()
