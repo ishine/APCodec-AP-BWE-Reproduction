@@ -12,10 +12,10 @@ from torch.utils.data import DistributedSampler, DataLoader
 import torch.multiprocessing as mp
 from torch.distributed import init_process_group
 from torch.nn.parallel import DistributedDataParallel
-from exp_16k.dataset import Dataset, mel_spectrogram, amp_pha_specturm, get_dataset_filelist
-from exp_16k.models import Encoder, Decoder, MultiPeriodDiscriminator, MultiScaleDiscriminator, feature_loss, generator_loss,\
+from exp_base.dataset import Dataset, mel_spectrogram, amp_pha_specturm, get_dataset_filelist
+from exp_base.models import Encoder, Decoder, MultiPeriodDiscriminator, MultiScaleDiscriminator, feature_loss, generator_loss,\
     discriminator_loss, amplitude_loss, phase_loss, STFT_consistency_loss, MultiResolutionDiscriminator
-from exp_16k.utils import AttrDict, build_env, plot_spectrogram, scan_checkpoint, load_checkpoint, save_checkpoint
+from exp_base.utils import AttrDict, build_env, plot_spectrogram, scan_checkpoint, load_checkpoint, save_checkpoint
 
 torch.backends.cudnn.benchmark = True
 
@@ -111,7 +111,7 @@ def train(h):
             y_mel = torch.autograd.Variable(y_mel.to(device, non_blocking=True))
             y = y.unsqueeze(1)
 
-            latent,codes,commitment_loss,codebook_loss = encoder(logamp, pha)
+            latent = encoder(logamp, pha)
             logamp_g, pha_g, rea_g, imag_g, y_g = decoder(latent)
             y_g_mel = mel_spectrogram(y_g.squeeze(1), h.n_fft, h.num_mels, h.sampling_rate, h.hop_size, h.win_size,
                                       0, None)
@@ -159,7 +159,7 @@ def train(h):
             # Losses defined on final waveforms
             L_W = L_GAN_G + L_FM + 45 * L_Mel + 45 * L_Mel_L2 
 
-            L_G = 45 * L_A + 100 * L_P + 20 * L_S + L_W + codebook_loss*10 +commitment_loss*2.5
+            L_G = 45 * L_A + 100 * L_P + 20 * L_S + L_W
 
             L_G.backward()
             optim_g.step()
@@ -177,10 +177,9 @@ def train(h):
                     I_error = F.l1_loss(imag, imag_g).item()
                     Mel_error = F.l1_loss(y_mel, y_g_mel).item()
                     Mel_L2_error = amplitude_loss(y_mel, y_g_mel).item()
-                    commit_loss = commitment_loss.item()
 
-                print('Steps : {:d}, Gen Loss Total : {:4.3f}, Amplitude Loss : {:4.3f}, Instantaneous Phase Loss : {:4.3f}, Group Delay Loss : {:4.3f}, Phase Time Difference Loss : {:4.3f}, STFT Consistency Loss : {:4.3f}, Real Part Loss : {:4.3f}, Imaginary Part Loss : {:4.3f}, Mel Spectrogram Loss : {:4.3f}, Mel Spectrogram L2 Loss : {:4.3f}, Commit Loss : {:4.3f}, s/b : {:4.3f}'.
-                      format(steps, L_G, A_error, IP_error, GD_error, PTD_error, C_error, R_error, I_error, Mel_error, Mel_L2_error, commit_loss, time.time() - start_b))
+                print('Steps : {:d}, Gen Loss Total : {:4.3f}, Amplitude Loss : {:4.3f}, Instantaneous Phase Loss : {:4.3f}, Group Delay Loss : {:4.3f}, Phase Time Difference Loss : {:4.3f}, STFT Consistency Loss : {:4.3f}, Real Part Loss : {:4.3f}, Imaginary Part Loss : {:4.3f}, Mel Spectrogram Loss : {:4.3f}, Mel Spectrogram L2 Loss : {:4.3f}, s/b : {:4.3f}'.
+                      format(steps, L_G, A_error, IP_error, GD_error, PTD_error, C_error, R_error, I_error, Mel_error, Mel_L2_error, time.time() - start_b))
 
             # checkpointing
             if steps % h.checkpoint_interval == 0 and steps != 0:
@@ -219,7 +218,7 @@ def train(h):
                 with torch.no_grad():
                     for j, batch in enumerate(validation_loader):
                         logamp, pha, rea, imag, y, y_mel = batch
-                        latent,_,_,_ = encoder(logamp.to(device), pha.to(device))
+                        latent = encoder(logamp.to(device), pha.to(device))
                         logamp_g, pha_g, rea_g, imag_g, y_g = decoder(latent)
 
                         logamp = torch.autograd.Variable(logamp.to(device, non_blocking=True))
@@ -284,7 +283,7 @@ def train(h):
 def main():
     print('Initializing Training Process..')
 
-    config_file = '/mnt/nvme_share/srt30/APCodec-Reproduction/exp_16k/config.json'
+    config_file = '/mnt/nvme_share/srt30/APCodec-Reproduction/exp_base/config.json'
 
     with open(config_file) as f:
         data = f.read()

@@ -127,14 +127,6 @@ class Encoder(torch.nn.Module):
         self.PHA_Encoder_downsample_output_conv.apply(init_weights)
         self.latent_output_conv.apply(init_weights)
 
-        self.quantizer = ResidualFSQ(
-            input_dim=h.latent_dim,
-            codebook_dim=h.latent_dim,
-            n_quantizers=4,
-            codebook_size=1024,
-            quantizer_dropout=False
-        )
-
     def _init_weights(self, m):
         if isinstance(m, (nn.Conv1d, nn.Linear)):
             nn.init.trunc_normal_(m.weight, std=0.02)
@@ -163,9 +155,8 @@ class Encoder(torch.nn.Module):
         encode = torch.cat((logamp_encode, pha_encode), -2) 
 
         latent = self.latent_output_conv(encode)
-        base_latent = latent
-        latent,codes,_,commitment_loss,codebook_loss = self.quantizer(latent)
-        return base_latent, latent,codes,commitment_loss,codebook_loss
+        
+        return latent
 
 
 class Decoder(torch.nn.Module):

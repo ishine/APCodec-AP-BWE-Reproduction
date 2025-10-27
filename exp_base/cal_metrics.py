@@ -52,7 +52,7 @@ def cal_apd(pred, target):
 
     return apd_ip, apd_gd, apd_iaf
 
-def cal_mcd(pred, target, n_mfcc=13, sample_rate=48000, n_fft=1024, hop_size=40):
+def cal_mcd(pred, target, n_mfcc=13, sample_rate=8000, n_fft=1024, hop_size=40):
     mfcc_transform = torchaudio.transforms.MFCC(
         sample_rate=sample_rate,
         n_mfcc=n_mfcc,
